@@ -5,22 +5,11 @@
 
 generator client {
   provider = "prisma-client"
-  output   = "../app/generated/prisma"
+  output   = "../generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
-}
-
-// Why : the parent record .It owns the questions and the submissions.
-model Form{
-  id      String  @id @default(cuid())
-  title  String
-  description String?
-  published Boolean @default(true)
-  createdAt DateTime @default(now())
-  questions Questions[]
-  submissions Submissions[]
 }
 
 /// Form: one survey created by an author. It holds the title and
