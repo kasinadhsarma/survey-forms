@@ -64,13 +64,13 @@ This guide explains, in order, how to create the project, which files are create
 
 \textbf{Project layout.} The project uses the root \path{app/} layout (no \path{src/} folder). Section~\ref{sec:verified} says exactly what was checked and what was not.
 
-\textbf{Core idea.} The API Zod schemas, kept one file per concern in \path{shared/schemas/}, are imported by both the browser and the API. The same rules therefore run in the form, in the Hono validator, and before anything reaches a database.
+\textbf{Core idea.} The API Zod schemas, kept one file per concern in \path{lib/schemas/}, are imported by both the browser and the API. The same rules therefore run in the form, in the Hono validator, and before anything reaches a database.
 
 \paragraph{Decisions in this version.}
 \begin{itemize}
   \item \textbf{Hono, not Elysia.} Hono runs inside a Next.js route handler, giving one project and one deployment.
   \item \textbf{Postgres is the source of truth; Firestore mirrors it.} Every write goes to Postgres through Prisma first and is then copied to Firestore under the same ids. If Postgres is unreachable, reads fall back to Firestore. Section~\ref{sec:integration} explains the design and its limits.
-  \item \textbf{Files live in Firestore, not in a storage bucket.} A new Firebase bucket may need a paid plan, so uploaded files are stored as documents in a Firestore collection. This caps a file at 700~KB (Firestore documents are limited to 1~MiB). Moving to a real bucket later changes only \path{server/repo/files.ts} and the two file routes.
+  \item \textbf{Files live in Firestore, not in a storage bucket.} A new Firebase bucket may need a paid plan, so uploaded files are stored as documents in a Firestore collection. This caps a file at 700~KB (Firestore documents are limited to 1~MiB). Moving to a real bucket later changes only \path{lib/server/repo/files.ts} and the two file routes.
 \end{itemize}
 
 % ------------------------------------------------------------
@@ -163,12 +163,12 @@ Each package is here for one job, and the list is kept short on purpose.
 \midrule
 \path{components/} & Forms, tables and inputs. Validate with the shared Zod schemas before sending.\\
 \path{lib/fetch.ts} & Typed client; every endpoint has input, output, params and query schemas.\\
-\path{server/routes/} & Hono routes. Validate again on the server; return one error shape.\\
-\path{server/repo/forms.ts}, \path{submissions.ts} & The only entry points the routes use. They combine the two databases.\\
-\path{server/repo/postgres/} & Prisma code: the source of truth.\\
-\path{server/repo/firestore/} & Firestore code: the mirror and the read fallback.\\
-\path{server/repo/files.ts} & Uploaded files, stored in Firestore.\\
-\path{server/repo/sync.ts} & Compares and repairs the two databases.\\
+\path{lib/server/routes/} & Hono routes. Validate again on the server; return one error shape.\\
+\path{lib/server/repo/forms.ts}, \path{submissions.ts} & The only entry points the routes use. They combine the two databases.\\
+\path{lib/server/repo/postgres/} & Prisma code: the source of truth.\\
+\path{lib/server/repo/firestore/} & Firestore code: the mirror and the read fallback.\\
+\path{lib/server/repo/files.ts} & Uploaded files, stored in Firestore.\\
+\path{lib/server/repo/sync.ts} & Compares and repairs the two databases.\\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -199,7 +199,7 @@ cd survey-forms
 \end{lstlisting}
 \textbf{Files created by the generator:} \path{package.json}, \path{tsconfig.json}, \path{next.config.ts}, \path{eslint.config.mjs}, \path{AGENTS.md}, \path{README.md}, and the folders \path{app/} and \path{public/}.
 
-\textbf{No \path{src/} folder.} Every folder in this guide (\path{app/}, \path{components/}, \path{lib/}, \path{shared/}, \path{server/}, \path{prisma/}, \path{generated/}) sits at the project root. The \texttt{@/} alias points to the root through \texttt{"paths": \{ "@/*": ["./*"] \}} in \path{tsconfig.json}, which the starter writes for you.
+\textbf{No \path{src/} folder.} Every folder in this guide (\path{app/}, \path{components/}, \path{lib/} (with \path{lib/server/} and \path{lib/schemas/} inside), \path{prisma/}, \path{generated/}) sits at the project root. The \texttt{@/} alias points to the root through \texttt{"paths": \{ "@/*": ["./*"] \}} in \path{tsconfig.json}, which the starter writes for you.
 
 \textbf{Tailwind v4.} \path{app/globals.css} begins with \texttt{@import "tailwindcss";}. There are no \texttt{@tailwind} directives and no \path{tailwind.config.js}. Create \path{postcss.config.mjs} (listing in Section~\ref{sec:code}) so the styling does not depend on the starter's Turbopack rule.
 
@@ -216,7 +216,7 @@ npm i tailwindcss @tailwindcss/postcss postcss
 \subsection*{Step 3: Configure environment variables, Firestore and Git}
 \textbf{Files created:} \path{.env} (never committed) and \path{.env.example} (committed). Next.js loads \path{.env}; the Prisma CLI loads it through \texttt{dotenv}. Generate the token with \texttt{openssl rand -hex 24}.
 
-\textbf{Firebase values.} Copy \texttt{project\_id}, \texttt{client\_email} and \texttt{private\_key} from the downloaded service account JSON into \texttt{FIREBASE\_PROJECT\_ID}, \texttt{FIREBASE\_CLIENT\_EMAIL} and \texttt{FIREBASE\_PRIVATE\_KEY}. Keep the private key in double quotes on one line with the line breaks written as \texttt{\textbackslash n}; \path{server/firestore.ts} turns them back into real line breaks. Then delete the JSON file or keep it outside the project: it grants full admin access.
+\textbf{Firebase values.} Copy \texttt{project\_id}, \texttt{client\_email} and \texttt{private\_key} from the downloaded service account JSON into \texttt{FIREBASE\_PROJECT\_ID}, \texttt{FIREBASE\_CLIENT\_EMAIL} and \texttt{FIREBASE\_PRIVATE\_KEY}. Keep the private key in double quotes on one line with the line breaks written as \texttt{\textbackslash n}; \path{lib/server/firestore.ts} turns them back into real line breaks. Then delete the JSON file or keep it outside the project: it grants full admin access.
 
 \textbf{Create the database.} In the Firebase console open Firestore and click Create database, accept the \texttt{(default)} database and choose a region. Security rules do not matter for this app, because the Admin SDK bypasses them and no browser talks to Firestore.
 
@@ -251,31 +251,32 @@ Application code imports the client as \texttt{@/generated/prisma/client}. Do no
 
 \subsection*{Step 5: Server foundations}
 \begin{itemize}
-  \item \path{server/env.ts}: validates the environment with Zod. Two lazy getters keep the database variables apart from the Firebase ones, so forms keep working when Firebase is not configured.
-  \item \path{server/db.ts}: one shared Prisma client with the Postgres adapter, kept on \texttt{globalThis} so hot reloading does not open new pools.
-  \item \path{server/firestore.ts}: starts the Firebase Admin app once (reused if it exists) and returns the Firestore database.
-  \item \path{server/errors.ts}: one error body shape, \texttt{\{ error: \{ code, message \} \}}.
-  \item \path{server/validate.ts}: a wrapper around \texttt{zValidator} that returns the same 400 body with the list of issues.
+  \item \path{lib/server/env.ts}: validates the environment with Zod. Two lazy getters keep the database variables apart from the Firebase ones, so forms keep working when Firebase is not configured.
+  \item \path{lib/server/db.ts}: one shared Prisma client with the Postgres adapter, kept on \texttt{globalThis} so hot reloading does not open new pools.
+  \item \path{lib/server/firestore.ts}: starts the Firebase Admin app once (reused if it exists) and returns the Firestore database.
+  \item \path{lib/server/errors.ts}: one error body shape, \texttt{\{ error: \{ code, message \} \}}.
+  \item \path{lib/server/methods.ts}: \texttt{methodNotAllowed}, the 405 and \texttt{Allow} helper used by every route file.
+  \item \path{lib/server/validate.ts}: a wrapper around \texttt{zValidator} that returns the same 400 body with the list of issues.
 \end{itemize}
 
 \subsection*{Step 6: Write the schemas, one file per concern}
 \begin{itemize}
-  \item \path{shared/schemas/question.ts}: question types, the question schema and \texttt{isChoiceType}.
-  \item \path{shared/schemas/form.ts}: create-form payload, form response, dashboard summary and the id parameter.
-  \item \path{shared/schemas/upload.ts}: allowed file types, the 700~KB limit, the pattern a file id must match, and the upload result.
-  \item \path{shared/schemas/submission.ts}: the answers payload, the page of submissions and \texttt{buildAnswerSchema}.
-  \item \path{lib/schemas/builder.ts}: the builder screen only; the server never imports it.
+  \item \path{lib/schemas/question.ts}: question types, the question schema and \texttt{isChoiceType}.
+  \item \path{lib/schemas/form.ts}: create-form payload, form response, dashboard summary and the id parameter.
+  \item \path{lib/schemas/upload.ts}: allowed file types, the 700~KB limit, the pattern a file id must match, and the upload result.
+  \item \path{lib/schemas/submission.ts}: the answers payload, the page of submissions and \texttt{buildAnswerSchema}.
+  \item \path{lib/schemas/builder.ts}: client-only, the one file in \path{lib/schemas/} the server never imports.
 \end{itemize}
 \texttt{z.email()} and \texttt{z.iso.date()} are Zod 4 forms; with an older Zod use \texttt{z.string().email()} and \texttt{z.string().date()}.
 
 \subsection*{Step 7: Build the repository layer}
 \begin{itemize}
-  \item \path{server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores numbers as numbers, and returns what it stored so the same row can be mirrored.
-  \item \path{server/repo/firestore/forms.ts} and \path{submissions.ts}: mirror writes, mirror reads and the counter transaction described in Section~\ref{sec:integration}.
-  \item \path{server/repo/dual.ts}: \texttt{mirrorSafely} (log, do not fail) and \texttt{readWithFallback}.
-  \item \path{server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Postgres first, then mirror; Postgres read first, then fallback.
-  \item \path{server/repo/files.ts}: save, load and existence-check for uploaded files.
-  \item \path{server/repo/sync.ts}: \texttt{getSyncStatus} and \texttt{syncAll}.
+  \item \path{lib/server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores numbers as numbers, and returns what it stored so the same row can be mirrored.
+  \item \path{lib/server/repo/firestore/forms.ts} and \path{submissions.ts}: mirror writes, mirror reads and the counter transaction described in Section~\ref{sec:integration}.
+  \item \path{lib/server/repo/dual.ts}: \texttt{mirrorSafely} (log, do not fail) and \texttt{readWithFallback}.
+  \item \path{lib/server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Postgres first, then mirror; Postgres read first, then fallback.
+  \item \path{lib/server/repo/files.ts}: save, load and existence-check for uploaded files.
+  \item \path{lib/server/repo/sync.ts}: \texttt{getSyncStatus} and \texttt{syncAll}.
 \end{itemize}
 
 \subsection*{Step 8: Build the Hono API}
@@ -298,7 +299,14 @@ POST & \texttt{/api/sync} & bearer token & 200, what was copied; 401\\
 \end{tabular}
 \end{center}
 
-\textbf{405 for every other method.} Each path ends with an \texttt{.all(...)} handler that answers any other method with 405 and an \texttt{Allow} header. An unknown path returns a JSON 404, and an unexpected failure returns a generic 500 while the real error is only logged. Error bodies look like \texttt{\{ error: \{ code, message, issues? \} \}}.
+\textbf{405 for every other method.} Build this once, then reuse it on every path.
+\begin{enumerate}
+  \item Add a small helper in \path{lib/server/methods.ts}, \texttt{methodNotAllowed(app, path, allowedMethods)}. It builds the \texttt{Allow} value from the allowed methods plus \texttt{OPTIONS}, registers an \texttt{OPTIONS} handler that answers 204 with that header, and registers \texttt{app.all(path, ...)} that answers 405 with the \texttt{Allow} header and the usual error body, code \texttt{method\_not\_allowed}.
+  \item Call it at the end of each route file, after the real handlers, because Hono runs handlers in the order they were registered. Pass the methods that path really supports, for example \texttt{["GET", "POST"]} for \texttt{/api/forms}. \texttt{HEAD} is answered through \texttt{GET} automatically.
+  \item In \path{lib/server/app.ts} add \texttt{app.notFound(...)} for a JSON 404 and \texttt{app.onError(...)} for a generic 500 that logs the real error and never sends it to the client.
+  \item Check it: \texttt{curl -i -X DELETE /api/forms} should return 405 with \texttt{Allow: GET, POST, OPTIONS}, and an unknown path should return the JSON 404.
+\end{enumerate}
+Error bodies look like \texttt{\{ error: \{ code, message, issues? \} \}}.
 
 \textbf{Submissions.} The route builds the answer schema from the form's own questions on every request, validates the body with it, checks that every file answer is the id of a file this app stored, and only then saves. A body that is not JSON becomes \texttt{null} and fails validation with a 400.
 
@@ -403,57 +411,59 @@ Every listing below is read directly from the repository when this document is b
 
 
 \subsection{Shared API schemas}
-\srcfile{shared/schemas/question.ts}{Question types, schema and helper.}
+\srcfile{lib/schemas/question.ts}{Question types, schema and helper.}
 
-\srcfile{shared/schemas/form.ts}{Create-form payload, form response, dashboard summary.}
+\srcfile{lib/schemas/form.ts}{Create-form payload, form response, dashboard summary.}
 
-\srcfile{shared/schemas/upload.ts}{Upload limits, allowed types, file id pattern.}
+\srcfile{lib/schemas/upload.ts}{Upload limits, allowed types, file id pattern.}
 
-\srcfile{shared/schemas/submission.ts}{Answers, submissions page, and the runtime answer schema.}
+\srcfile{lib/schemas/submission.ts}{Answers, submissions page, and the runtime answer schema.}
 
 
 \subsection{Server foundations}
-\srcfile{server/env.ts}{Lazy, validated environment variables.}
+\srcfile{lib/server/env.ts}{Lazy, validated environment variables.}
 
-\srcfile{server/db.ts}{Shared Prisma client with the Postgres adapter.}
+\srcfile{lib/server/db.ts}{Shared Prisma client with the Postgres adapter.}
 
-\srcfile{server/firestore.ts}{Firebase Admin app and Firestore database.}
+\srcfile{lib/server/firestore.ts}{Firebase Admin app and Firestore database.}
 
-\srcfile{server/errors.ts}{The one error body shape.}
+\srcfile{lib/server/errors.ts}{The one error body shape.}
 
-\srcfile{server/validate.ts}{zValidator wrapper with a consistent 400 body.}
+\srcfile{lib/server/methods.ts}{Helper that adds the 405 + Allow catch-all to a path.}
+
+\srcfile{lib/server/validate.ts}{zValidator wrapper with a consistent 400 body.}
 
 
 \subsection{Repository layer}
-\srcfile{server/repo/postgres/forms.ts}{Form data access in Postgres (source of truth).}
+\srcfile{lib/server/repo/postgres/forms.ts}{Form data access in Postgres (source of truth).}
 
-\srcfile{server/repo/postgres/submissions.ts}{Submission data access in Postgres.}
+\srcfile{lib/server/repo/postgres/submissions.ts}{Submission data access in Postgres.}
 
-\srcfile{server/repo/firestore/forms.ts}{Form mirror writes and reads in Firestore.}
+\srcfile{lib/server/repo/firestore/forms.ts}{Form mirror writes and reads in Firestore.}
 
-\srcfile{server/repo/firestore/submissions.ts}{Submission mirror writes and reads in Firestore.}
+\srcfile{lib/server/repo/firestore/submissions.ts}{Submission mirror writes and reads in Firestore.}
 
-\srcfile{server/repo/dual.ts}{Safe mirror write and read with fallback.}
+\srcfile{lib/server/repo/dual.ts}{Safe mirror write and read with fallback.}
 
-\srcfile{server/repo/forms.ts}{Form facade: Postgres first, then mirror.}
+\srcfile{lib/server/repo/forms.ts}{Form facade: Postgres first, then mirror.}
 
-\srcfile{server/repo/submissions.ts}{Submission facade: Postgres first, then mirror.}
+\srcfile{lib/server/repo/submissions.ts}{Submission facade: Postgres first, then mirror.}
 
-\srcfile{server/repo/files.ts}{Uploaded files stored in Firestore.}
+\srcfile{lib/server/repo/files.ts}{Uploaded files stored in Firestore.}
 
-\srcfile{server/repo/sync.ts}{Sync status and full repair.}
+\srcfile{lib/server/repo/sync.ts}{Sync status and full repair.}
 
 
 \subsection{API routes}
-\srcfile{server/routes/forms.ts}{Form endpoints and 405 handling.}
+\srcfile{lib/server/routes/forms.ts}{Form endpoints and 405 handling.}
 
-\srcfile{server/routes/submissions.ts}{Submission endpoints and 405 handling.}
+\srcfile{lib/server/routes/submissions.ts}{Submission endpoints and 405 handling.}
 
-\srcfile{server/routes/files.ts}{File upload and download.}
+\srcfile{lib/server/routes/files.ts}{File upload and download.}
 
-\srcfile{server/routes/sync.ts}{Token-protected sync endpoints.}
+\srcfile{lib/server/routes/sync.ts}{Token-protected sync endpoints.}
 
-\srcfile{server/app.ts}{The Hono app: routes, 404 and error handler.}
+\srcfile{lib/server/app.ts}{The Hono app: routes, 404 and error handler.}
 
 \srcfile{app/api/[[...route]]/route.ts}{Mounts Hono inside Next.js.}
 

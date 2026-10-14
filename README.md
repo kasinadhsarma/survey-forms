@@ -12,7 +12,7 @@ responses and view them in a table.
 - Cloud Firestore as a live mirror of the data (reads fall back to it if
   Postgres is down) and as the store for uploaded files
 
-The Zod schemas in `shared/schemas/` are imported by both the browser and the
+The Zod schemas in `lib/schemas/` are imported by both the browser and the
 API, so the same rules run in the form, in the API and before saving.
 
 ## Setup
