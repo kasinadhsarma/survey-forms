@@ -1,0 +1,501 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[margin=2.2cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{listings}
+\usepackage{textcomp}
+\usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
+
+\definecolor{codebg}{RGB}{245,245,247}
+\definecolor{codeframe}{RGB}{210,210,215}
+
+\lstdefinestyle{code}{
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=false,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  upquote=true,
+  xleftmargin=4pt,
+  xrightmargin=4pt,
+  aboveskip=8pt,
+  belowskip=8pt,
+  literate={·}{{\textperiodcentered}}1
+}
+\lstset{style=code}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\emergencystretch=3em
+
+% one source file, read straight from the repository so the listing can
+% never differ from the code that was built and tested
+\newcommand{\srcfile}[2]{%
+  \textbf{File:} \path{#1}. #2\par
+  \lstinputlisting{../#1}%
+}
+
+\title{\textbf{Survey Forms (Google Forms Clone)}\\[4pt]
+\large Build Guide: Project Creation, File Map, Integration and Requirements}
+\author{Written by Kasinadh Sarma}
+\date{13 October 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ------------------------------------------------------------
+\section{Overview}
+% ------------------------------------------------------------
+This guide explains, in order, how to create the project, which files are created or changed at each step, and how the layers connect. The application lets a user build a survey, share a public link, collect validated responses, and view the submissions.
+
+\textbf{Stack.} Next.js (App Router), Tailwind CSS v4, react-hook-form, Zod, \path{@better-fetch/fetch}, Hono (inside a Next.js route handler), Prisma 7 with PostgreSQL as the primary database, and Cloud Firestore (through the Firebase Admin SDK) as a live mirror of that data and as the store for uploaded files.
+
+\textbf{Project layout.} The project uses the root \path{app/} layout (no \path{src/} folder). Section~\ref{sec:verified} says exactly what was checked and what was not.
+
+\textbf{Core idea.} The API Zod schemas, kept one file per concern in \path{shared/schemas/}, are imported by both the browser and the API. The same rules therefore run in the form, in the Hono validator, and before anything reaches a database.
+
+\paragraph{Decisions in this version.}
+\begin{itemize}
+  \item \textbf{Hono, not Elysia.} Hono runs inside a Next.js route handler, giving one project and one deployment.
+  \item \textbf{Postgres is the source of truth; Firestore mirrors it.} Every write goes to Postgres through Prisma first and is then copied to Firestore under the same ids. If Postgres is unreachable, reads fall back to Firestore. Section~\ref{sec:integration} explains the design and its limits.
+  \item \textbf{Files live in Firestore, not in a storage bucket.} A new Firebase bucket may need a paid plan, so uploaded files are stored as documents in a Firestore collection. This caps a file at 700~KB (Firestore documents are limited to 1~MiB). Moving to a real bucket later changes only \path{server/repo/files.ts} and the two file routes.
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Requirements}
+% ------------------------------------------------------------
+\subsection{Software}
+\begin{center}
+\begin{tabular}{@{}p{3.3cm}p{5.2cm}p{6.1cm}@{}}
+\toprule
+\textbf{Requirement} & \textbf{Version} & \textbf{Purpose}\\
+\midrule
+Node.js & 22 or newer (24.18 used here) & Runtime\\
+npm & 10 or newer (11.16 used here) & Package manager\\
+PostgreSQL & Local, Docker, Neon or Supabase & Primary database used by Prisma\\
+Firebase project & Cloud Firestore enabled, Admin SDK service account & Mirror database and file store\\
+Git & Any recent version & Version control\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Packages}
+These are the versions installed in this project on 13 October 2026, read from \path{node_modules}.
+
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}p{2.6cm}p{6.4cm}@{}}
+\toprule
+\textbf{Package} & \textbf{Version} & \textbf{Role}\\
+\midrule
+\path{next} & 16.4.0 & Framework (Turbopack, Cache Components on by default)\\
+\path{react}, \path{react-dom} & 19.3.0 & UI\\
+\path{tailwindcss}, \path{@tailwindcss/postcss} & 4.3.3 & Styling (v4, CSS-first)\\
+\path{postcss} & 8.5.30 & Used by the Tailwind plugin\\
+\path{zod} & 4.6.7 & Shared schemas and types\\
+\path{react-hook-form} & 7.90.0 & Form state\\
+\path{@hookform/resolvers} & 5.9.1 & Connects Zod to react-hook-form\\
+\path{@better-fetch/fetch} & 1.3.2 & Typed HTTP client\\
+\path{hono} & 4.13.13 & API framework\\
+\path{@hono/zod-validator} & 0.9.1 & Request validation middleware\\
+\path{@prisma/client}, \path{prisma} & 7.10.0 & Database client, migrations and generation\\
+\path{@prisma/adapter-pg}, \path{pg} & 7.10.0, 8.23.1 & Postgres driver adapter (required by Prisma 7)\\
+\path{firebase-admin} & 14.5.0 & Firestore access from the server\\
+\path{dotenv} & 18.0.7 & Loads \path{.env} for \path{prisma.config.ts}\\
+\path{typescript}, \path{eslint}, \path{prettier} & 5.9.3, 9.39.5, 3.9.10 & Types, lint, formatting\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Why these libraries}\label{sec:why}
+Each package is here for one job, and the list is kept short on purpose.
+
+\begin{center}
+\begin{tabular}{@{}p{4.2cm}p{10.4cm}@{}}
+\toprule
+\textbf{Package} & \textbf{Why it is used}\\
+\midrule
+\path{next}, \path{react}, \path{react-dom} & One framework for pages, routing and server rendering, and the host for the API route handler.\\
+\path{tailwindcss}, \path{@tailwindcss/postcss}, \path{postcss} & Utility-first styling without a separate stylesheet system. v4 is CSS-first, and the PostCSS plugin keeps styling independent of the bundler.\\
+\path{zod} & One schema per concern, shared by the browser and the API, so the form, the validator and the database layer apply the same rules and the TypeScript types are inferred from them.\\
+\path{react-hook-form} & Fast form state for the survey builder and response forms, with few re-renders.\\
+\path{@hookform/resolvers} & Lets react-hook-form use the Zod schemas directly instead of duplicating rules.\\
+\path{@better-fetch/fetch} & A TypeScript-first wrapper over native \texttt{fetch}: typed responses and one error shape, without the weight of Axios.\\
+\path{hono} & A small, fast web framework that runs inside a Next.js route handler, so the API ships in the same project and deployment.\\
+\path{@hono/zod-validator} & Validates request bodies, params and queries in Hono with the shared Zod schemas.\\
+\path{@prisma/client}, \path{prisma} & A type-safe database client generated from the schema, plus migrations.\\
+\path{@prisma/adapter-pg}, \path{pg} & Prisma 7 requires a driver adapter; this is the node-postgres one for PostgreSQL.\\
+\path{firebase-admin} & Server-side access to Firestore, used as the live mirror and file store.\\
+\path{dotenv} & Loads \path{.env} for \path{prisma.config.ts}, which Next.js does not do.\\
+\path{typescript}, \path{eslint}, \path{prettier} & Static types, lint rules and consistent formatting.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Prisma versions must match.} The npm \texttt{latest} tag of \path{prisma} pointed to an 8.0 release candidate while \path{@prisma/client} was 7.10.0. The install commands in Step~2 pin the three Prisma packages to 7.10.0. Change all three together when you upgrade.
+
+\subsection{Accounts and configuration}
+\begin{itemize}
+  \item A PostgreSQL connection string (\texttt{DATABASE\_URL}).
+  \item A Firebase project with a Cloud Firestore database (the \texttt{(default)} database; the free Spark plan is enough).
+  \item A service account key for the Firebase Admin SDK: project id, client email and private key (Firebase console, Project settings, Service accounts, Generate new private key).
+  \item A random token for the sync endpoints (\texttt{SYNC\_TOKEN}).
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{How the Layers Connect}\label{sec:integration}
+% ------------------------------------------------------------
+\begin{center}
+\begin{tabular}{@{}p{3.4cm}p{11.2cm}@{}}
+\toprule
+\textbf{Layer} & \textbf{What it does}\\
+\midrule
+\path{components/} & Forms, tables and inputs. Validate with the shared Zod schemas before sending.\\
+\path{lib/fetch.ts} & Typed client; every endpoint has input, output, params and query schemas.\\
+\path{server/routes/} & Hono routes. Validate again on the server; return one error shape.\\
+\path{server/repo/forms.ts}, \path{submissions.ts} & The only entry points the routes use. They combine the two databases.\\
+\path{server/repo/postgres/} & Prisma code: the source of truth.\\
+\path{server/repo/firestore/} & Firestore code: the mirror and the read fallback.\\
+\path{server/repo/files.ts} & Uploaded files, stored in Firestore.\\
+\path{server/repo/sync.ts} & Compares and repairs the two databases.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Writes.} \texttt{createForm}, \texttt{deleteForm} and \texttt{createSubmission} run in Postgres first. Only after Postgres has committed does the same row go to Firestore, under the same id. A failure of the Firestore write is logged and does not fail the request, because the response is already correct; the sync endpoint repairs the difference.
+
+\paragraph{Reads.} Reads come from Postgres. If Postgres throws (for example it is unreachable), the same read runs against Firestore. A ``not found'' from Postgres is a real answer and is not retried.
+
+\paragraph{Firestore layout.} A form is one document in \texttt{forms/\{id\}} with its questions embedded and a \texttt{responseCount}. Each submission is a document in the subcollection \texttt{forms/\{id\}/submissions/\{id\}}. Uploaded files are documents in \texttt{files/\{id\}}.
+
+\paragraph{Counter.} When a submission is mirrored, a transaction writes the document and increments \texttt{responseCount} only if the document did not exist, so mirroring the same submission twice counts once.
+
+\paragraph{Limits of this design.}
+\begin{itemize}
+  \item Sync is one-way, from Postgres to Firestore. Edits made directly in Firestore are overwritten by the next sync.
+  \item When Postgres is down, reads work but new forms and submissions fail.
+  \item Syncing is manual (an endpoint you call); there is no scheduler.
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Step-by-Step Build}
+% ------------------------------------------------------------
+
+\subsection*{Step 1: Create the Next.js project with Tailwind v4}
+\begin{lstlisting}[language=bash]
+npx create-next-app@latest survey-forms --ts --tailwind --eslint --app --no-src-dir --use-npm --import-alias "@/*"
+cd survey-forms
+\end{lstlisting}
+\textbf{Files created by the generator:} \path{package.json}, \path{tsconfig.json}, \path{next.config.ts}, \path{eslint.config.mjs}, \path{AGENTS.md}, \path{README.md}, and the folders \path{app/} and \path{public/}.
+
+\textbf{No \path{src/} folder.} Every folder in this guide (\path{app/}, \path{components/}, \path{lib/}, \path{shared/}, \path{server/}, \path{prisma/}, \path{generated/}) sits at the project root. The \texttt{@/} alias points to the root through \texttt{"paths": \{ "@/*": ["./*"] \}} in \path{tsconfig.json}, which the starter writes for you.
+
+\textbf{Tailwind v4.} \path{app/globals.css} begins with \texttt{@import "tailwindcss";}. There are no \texttt{@tailwind} directives and no \path{tailwind.config.js}. Create \path{postcss.config.mjs} (listing in Section~\ref{sec:code}) so the styling does not depend on the starter's Turbopack rule.
+
+\textbf{Cache Components.} The starter sets \texttt{cacheComponents: true}. Two rules follow, and the code already applies both. A route handler must not export \texttt{runtime}. Any page that awaits \texttt{params}, and any client component that creates random ids (react-hook-form's field array does), must sit inside a \texttt{Suspense} boundary, or \texttt{next build} fails.
+
+\subsection*{Step 2: Install dependencies}
+Run each command on one line.
+\begin{lstlisting}[language=bash]
+npm i zod react-hook-form @hookform/resolvers @better-fetch/fetch hono @hono/zod-validator firebase-admin pg dotenv @prisma/client@7.10.0 @prisma/adapter-pg@7.10.0
+npm i -D prisma@7.10.0 @types/pg prettier
+npm i tailwindcss @tailwindcss/postcss postcss
+\end{lstlisting}
+
+\subsection*{Step 3: Configure environment variables, Firestore and Git}
+\textbf{Files created:} \path{.env} (never committed) and \path{.env.example} (committed). Next.js loads \path{.env}; the Prisma CLI loads it through \texttt{dotenv}. Generate the token with \texttt{openssl rand -hex 24}.
+
+\textbf{Firebase values.} Copy \texttt{project\_id}, \texttt{client\_email} and \texttt{private\_key} from the downloaded service account JSON into \texttt{FIREBASE\_PROJECT\_ID}, \texttt{FIREBASE\_CLIENT\_EMAIL} and \texttt{FIREBASE\_PRIVATE\_KEY}. Keep the private key in double quotes on one line with the line breaks written as \texttt{\textbackslash n}; \path{server/firestore.ts} turns them back into real line breaks. Then delete the JSON file or keep it outside the project: it grants full admin access.
+
+\textbf{Create the database.} In the Firebase console open Firestore and click Create database, accept the \texttt{(default)} database and choose a region. Security rules do not matter for this app, because the Admin SDK bypasses them and no browser talks to Firestore.
+
+\textbf{File updated:} \path{.gitignore}. The starter already ignores \texttt{.env*}, which also hides the example file. Add:
+\begin{lstlisting}
+!.env.example
+/generated/prisma
+*-firebase-adminsdk-*.json
+serviceAccount*.json
+\end{lstlisting}
+
+\subsection*{Step 4: Define the database with Prisma}
+\textbf{Files created:} \path{prisma.config.ts} and \path{prisma/schema.prisma}. Prisma 7 reads the database URL from \path{prisma.config.ts}, writes the client to \path{generated/prisma}, and needs the \texttt{pg} driver adapter at runtime.
+
+\begin{center}
+\begin{tabular}{@{}p{2.6cm}p{5.6cm}p{6.4cm}@{}}
+\toprule
+\textbf{Model} & \textbf{What it represents} & \textbf{Why it is a separate model}\\
+\midrule
+\texttt{Form} & One survey (title, description) & Parent record; owns questions and submissions\\
+\texttt{Question} & One prompt in a form & Needs its own type, options, order and required flag, and answers point to it\\
+\texttt{Submission} & One respondent's attempt & Groups answers so each response can be counted, paged and deleted as a unit\\
+\texttt{Answer} & One value for one question & Joins a submission to a question\\
+\bottomrule
+\end{tabular}
+\end{center}
+\begin{lstlisting}[language=bash]
+npx prisma migrate dev --name init
+npx prisma generate
+\end{lstlisting}
+Application code imports the client as \texttt{@/generated/prisma/client}. Do not drop or reset the database schema on a machine that holds real forms; a reset deletes them, and the Firestore mirror is only repopulated from Postgres, not the other way round.
+
+\subsection*{Step 5: Server foundations}
+\begin{itemize}
+  \item \path{server/env.ts}: validates the environment with Zod. Two lazy getters keep the database variables apart from the Firebase ones, so forms keep working when Firebase is not configured.
+  \item \path{server/db.ts}: one shared Prisma client with the Postgres adapter, kept on \texttt{globalThis} so hot reloading does not open new pools.
+  \item \path{server/firestore.ts}: starts the Firebase Admin app once (reused if it exists) and returns the Firestore database.
+  \item \path{server/errors.ts}: one error body shape, \texttt{\{ error: \{ code, message \} \}}.
+  \item \path{server/validate.ts}: a wrapper around \texttt{zValidator} that returns the same 400 body with the list of issues.
+\end{itemize}
+
+\subsection*{Step 6: Write the schemas, one file per concern}
+\begin{itemize}
+  \item \path{shared/schemas/question.ts}: question types, the question schema and \texttt{isChoiceType}.
+  \item \path{shared/schemas/form.ts}: create-form payload, form response, dashboard summary and the id parameter.
+  \item \path{shared/schemas/upload.ts}: allowed file types, the 700~KB limit, the pattern a file id must match, and the upload result.
+  \item \path{shared/schemas/submission.ts}: the answers payload, the page of submissions and \texttt{buildAnswerSchema}.
+  \item \path{lib/schemas/builder.ts}: the builder screen only; the server never imports it.
+\end{itemize}
+\texttt{z.email()} and \texttt{z.iso.date()} are Zod 4 forms; with an older Zod use \texttt{z.string().email()} and \texttt{z.string().date()}.
+
+\subsection*{Step 7: Build the repository layer}
+\begin{itemize}
+  \item \path{server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores numbers as numbers, and returns what it stored so the same row can be mirrored.
+  \item \path{server/repo/firestore/forms.ts} and \path{submissions.ts}: mirror writes, mirror reads and the counter transaction described in Section~\ref{sec:integration}.
+  \item \path{server/repo/dual.ts}: \texttt{mirrorSafely} (log, do not fail) and \texttt{readWithFallback}.
+  \item \path{server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Postgres first, then mirror; Postgres read first, then fallback.
+  \item \path{server/repo/files.ts}: save, load and existence-check for uploaded files.
+  \item \path{server/repo/sync.ts}: \texttt{getSyncStatus} and \texttt{syncAll}.
+\end{itemize}
+
+\subsection*{Step 8: Build the Hono API}
+\begin{center}
+\begin{tabular}{@{}p{1.7cm}p{5.5cm}p{3.3cm}p{4.1cm}@{}}
+\toprule
+\textbf{Method} & \textbf{Path} & \textbf{Input} & \textbf{Result}\\
+\midrule
+GET & \texttt{/api/forms} & none & 200, forms with counts\\
+POST & \texttt{/api/forms} & create-form payload & 201, the form; 400\\
+GET & \texttt{/api/forms/:id} & none & 200; 404\\
+DELETE & \texttt{/api/forms/:id} & none & 204; 404\\
+POST & \texttt{/api/forms/:id/submissions} & answers, checked against that form's questions & 201, \texttt{\{ id \}}; 400; 404\\
+GET & \texttt{/api/forms/:id/submissions} & \texttt{?page\&limit} & 200, one page; file answers are download paths\\
+POST & \texttt{/api/files} & multipart field \texttt{file} & 201, \texttt{\{ id \}}; 400\\
+GET & \texttt{/api/files/:id} & none & 200, the file as a download; 404\\
+GET & \texttt{/api/sync/status} & bearer token & 200, comparison of both databases; 401\\
+POST & \texttt{/api/sync} & bearer token & 200, what was copied; 401\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{405 for every other method.} Each path ends with an \texttt{.all(...)} handler that answers any other method with 405 and an \texttt{Allow} header. An unknown path returns a JSON 404, and an unexpected failure returns a generic 500 while the real error is only logged. Error bodies look like \texttt{\{ error: \{ code, message, issues? \} \}}.
+
+\textbf{Submissions.} The route builds the answer schema from the form's own questions on every request, validates the body with it, checks that every file answer is the id of a file this app stored, and only then saves. A body that is not JSON becomes \texttt{null} and fails validation with a 400.
+
+\textbf{Files.} The upload route re-checks type and size on the server, because the browser check can be skipped. Downloads are sent as attachments with \texttt{X-Content-Type-Options: nosniff}, so an uploaded file is never run as a page on this site.
+
+\textbf{Sync routes.} They can rewrite a whole database and reveal counts, so they answer 401 unless the request carries \texttt{Authorization: Bearer <SYNC\_TOKEN>}. With no token configured they stay closed.
+
+\subsection*{Step 9: Mount Hono inside Next.js}
+\path{app/api/[[...route]]/route.ts} exports GET, POST, PUT, PATCH, DELETE and OPTIONS, all handled by the Hono app. All methods are exported on purpose: Next.js answers an unexported method with its own empty 405, while Hono answers with the JSON 405 and the \texttt{Allow} header. There is no \texttt{runtime} export, because Cache Components rejects it.
+
+\subsection*{Step 10: Create the typed HTTP client and class patterns}
+\path{lib/fetch.ts} lists every JSON endpoint with its schemas, so a mistyped URL or wrong body is a type error and every response is validated. \texttt{getErrorMessage} reads the server's error message. File upload uses a plain \texttt{fetch} with \texttt{FormData} because a multipart body cannot be described by a Zod input schema; its response is still parsed with a schema. \path{lib/useLoad.ts} runs an async loader and reports loading, error or data. \path{lib/responsive/pattrens/forms.ts} holds every Tailwind class string, one object per component; components import their object as \texttt{p} and write \texttt{className=\{p.input\}}. The folder keeps the spelling \texttt{pattrens} used in your other projects.
+
+\subsection*{Step 11: Build the frontend}
+\begin{center}
+\begin{tabular}{@{}p{6.0cm}p{8.6cm}@{}}
+\toprule
+\textbf{File} & \textbf{Responsibility}\\
+\midrule
+\path{app/page.tsx} & Dashboard: ``New form'' button and the list of forms.\\
+\path{app/forms/new/page.tsx} & Builder page; the builder sits inside \texttt{Suspense}.\\
+\path{app/f/[formId]/page.tsx} & Public survey page; params are read inside \texttt{Suspense}.\\
+\path{app/forms/[id]/responses/page.tsx} & Responses page; params are read inside \texttt{Suspense}.\\
+\path{app/layout.tsx} & Root layout. \texttt{<body>} has \texttt{suppressHydrationWarning} because browser extensions such as Grammarly add attributes before React loads.\\
+\path{components/FormBuilder.tsx} & Create a form: react-hook-form with a field array and \texttt{builderFormSchema}.\\
+\path{components/OptionsEditor.tsx} & Choices of one question: one input per option, add and remove, and a Yes / No preset.\\
+\path{components/QuestionField.tsx} & One input per question type.\\
+\path{components/FileUploadField.tsx} & Checks the file, uploads it to \texttt{/api/files}, stores the returned id.\\
+\path{components/SurveyForm.tsx} & Fills in a survey with a schema built from its questions, then submits.\\
+\path{components/SurveyLoader.tsx} & Loads a form for the public page.\\
+\path{components/FormList.tsx} & Dashboard list with links to the survey and its responses.\\
+\path{components/ResponsesView.tsx} & Table with one column per question and paging; file answers are links.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection*{Step 12: Verify}
+\begin{lstlisting}[language=bash]
+npx prettier --check .
+npx tsc --noEmit
+npx eslint .
+npm run build
+npm run dev
+\end{lstlisting}
+Add a \path{.prettierignore} listing \texttt{.next}, \texttt{.agents}, \texttt{.claude}, \texttt{generated}, \texttt{node\_modules} and \texttt{package-lock.json} so Prettier skips generated files. Do not run \texttt{npm run build} while \texttt{npm run dev} is serving the same folder: the build replaces the \path{.next} directory and can stop the dev server.
+
+Then test by hand: create a form with one question of each type, open its public link, submit an invalid answer (an error appears next to that question), submit a valid one, and open the responses page.
+
+\subsection*{Step 13: Operate the two databases}
+\begin{lstlisting}[language=bash]
+curl -H "Authorization: Bearer $SYNC_TOKEN" localhost:3000/api/sync/status
+curl -X POST -H "Authorization: Bearer $SYNC_TOKEN" localhost:3000/api/sync
+\end{lstlisting}
+\texttt{status} lists form ids missing from Firestore, ids that exist only in Firestore, and both submission counts; \texttt{inSync} is true only when all of these match. Comparing ids matters: counts alone say ``in sync'' when one form was deleted and another added. \texttt{POST /api/sync} copies every form and submission from Postgres (documents are replaced, so repeating it is safe), sets each form's counter to the real number, and removes Firestore forms that no longer exist in Postgres. Run it after any Firestore outage, after restoring Postgres from a backup, or when the server log shows ``Firestore mirror failed''.
+
+% ------------------------------------------------------------
+\section{What Was Verified}\label{sec:verified}
+% ------------------------------------------------------------
+\textbf{Checked in this project:}
+\begin{itemize}
+  \item \texttt{prettier --check}, \texttt{tsc --noEmit}, \texttt{eslint .} and \texttt{npm run build} all pass.
+  \item API, against a running dev server with a real Postgres (Docker) and a real Firestore database: creating forms; rejecting a choice question with one option; rejecting invalid answers with one message per field; saving a valid submission and listing it with numbers stored as numbers; dashboard counts; 404 and 405 bodies.
+  \item Files: upload of a text file, download as an attachment with \texttt{nosniff}, rejection of a disallowed type and of an 800~KB file, rejection of a malformed and of an unknown file id on submit, acceptance of a real id.
+  \item Sync: new writes appear in both databases with equal counts; a form deleted from Firestore and a stray form added were both reported and repaired; deleting a form removes it from both; with the Postgres container stopped, the form list, a form and its submissions were still served from Firestore, and the databases matched again after Postgres returned.
+  \item Browser: the builder creates a multi-choice form using the Yes / No preset; the public survey page renders the question and options; the hydration warning caused by a browser extension no longer shows.
+\end{itemize}
+
+\textbf{Not checked:}
+\begin{itemize}
+  \item A full click-through of every question type in the browser (date and number inputs, the file input and the validation messages shown next to fields). They were checked through the API and the shared schemas only.
+  \item The ``Firestore mirror failed'' path with a real Firestore error. Drift was created by editing Firestore by hand, not by a failing write.
+  \item Deployment, concurrent writers, large data volumes, and a Firebase Storage bucket (not used).
+\end{itemize}
+
+% ------------------------------------------------------------
+\section{Known Limits}
+% ------------------------------------------------------------
+\begin{itemize}
+  \item \textbf{No login.} Anyone with a form link can answer it, and the forms list, responses and file downloads need no sign-in. File ids are random and unguessable, but the responses endpoint returns them.
+  \item \textbf{File size.} Files are limited to 700~KB because they are stored inside Firestore documents. Photos and short PDFs fit; larger files need a real bucket.
+  \item \textbf{Orphaned files.} Deleting a form does not delete the files its answers pointed to.
+  \item \textbf{One-way sync and manual repair}, as described in Section~\ref{sec:integration}.
+  \item \textbf{No Delete button.} Forms can only be deleted through the API.
+\end{itemize}
+
+\newpage
+% ------------------------------------------------------------
+\section{Source Code}\label{sec:code}
+% ------------------------------------------------------------
+Every listing below is read directly from the repository when this document is built, so it is the exact content of the file. The code follows these conventions: braces on every \texttt{if}, a doc comment on each function, descriptive names, Prettier width 80 with single quotes and trailing commas, and no inline Tailwind classes (they live in the patterns file). Comments marked ``Why'' explain a decision, not the syntax.
+
+\subsection{Configuration}
+\srcfile{prisma.config.ts}{Prisma 7 configuration: schema path, migrations path and database URL.}
+
+\srcfile{prisma/schema.prisma}{The four models, with a comment on why each exists.}
+
+\srcfile{postcss.config.mjs}{Tailwind v4 PostCSS plugin.}
+
+\srcfile{.env.example}{Environment variable template.}
+
+\srcfile{.prettierrc}{Prettier settings: width 80, single quotes, trailing commas.}
+
+
+\subsection{Shared API schemas}
+\srcfile{shared/schemas/question.ts}{Question types, schema and helper.}
+
+\srcfile{shared/schemas/form.ts}{Create-form payload, form response, dashboard summary.}
+
+\srcfile{shared/schemas/upload.ts}{Upload limits, allowed types, file id pattern.}
+
+\srcfile{shared/schemas/submission.ts}{Answers, submissions page, and the runtime answer schema.}
+
+
+\subsection{Server foundations}
+\srcfile{server/env.ts}{Lazy, validated environment variables.}
+
+\srcfile{server/db.ts}{Shared Prisma client with the Postgres adapter.}
+
+\srcfile{server/firestore.ts}{Firebase Admin app and Firestore database.}
+
+\srcfile{server/errors.ts}{The one error body shape.}
+
+\srcfile{server/validate.ts}{zValidator wrapper with a consistent 400 body.}
+
+
+\subsection{Repository layer}
+\srcfile{server/repo/postgres/forms.ts}{Form data access in Postgres (source of truth).}
+
+\srcfile{server/repo/postgres/submissions.ts}{Submission data access in Postgres.}
+
+\srcfile{server/repo/firestore/forms.ts}{Form mirror writes and reads in Firestore.}
+
+\srcfile{server/repo/firestore/submissions.ts}{Submission mirror writes and reads in Firestore.}
+
+\srcfile{server/repo/dual.ts}{Safe mirror write and read with fallback.}
+
+\srcfile{server/repo/forms.ts}{Form facade: Postgres first, then mirror.}
+
+\srcfile{server/repo/submissions.ts}{Submission facade: Postgres first, then mirror.}
+
+\srcfile{server/repo/files.ts}{Uploaded files stored in Firestore.}
+
+\srcfile{server/repo/sync.ts}{Sync status and full repair.}
+
+
+\subsection{API routes}
+\srcfile{server/routes/forms.ts}{Form endpoints and 405 handling.}
+
+\srcfile{server/routes/submissions.ts}{Submission endpoints and 405 handling.}
+
+\srcfile{server/routes/files.ts}{File upload and download.}
+
+\srcfile{server/routes/sync.ts}{Token-protected sync endpoints.}
+
+\srcfile{server/app.ts}{The Hono app: routes, 404 and error handler.}
+
+\srcfile{app/api/[[...route]]/route.ts}{Mounts Hono inside Next.js.}
+
+
+\subsection{Client library}
+\srcfile{lib/fetch.ts}{Typed HTTP client and error message helper.}
+
+\srcfile{lib/useLoad.ts}{Loading hook.}
+
+\srcfile{lib/schemas/builder.ts}{Builder-only schema and conversion to the API payload.}
+
+\srcfile{lib/responsive/pattrens/forms.ts}{All Tailwind class strings.}
+
+
+\subsection{Components}
+\srcfile{components/FormBuilder.tsx}{Create-form screen.}
+
+\srcfile{components/OptionsEditor.tsx}{Options editor for choice questions.}
+
+\srcfile{components/QuestionField.tsx}{One input per question type.}
+
+\srcfile{components/FileUploadField.tsx}{File picker and upload.}
+
+\srcfile{components/SurveyForm.tsx}{Public survey form.}
+
+\srcfile{components/SurveyLoader.tsx}{Loads a form for the public page.}
+
+\srcfile{components/FormList.tsx}{Dashboard list.}
+
+\srcfile{components/ResponsesView.tsx}{Responses table with paging.}
+
+
+\subsection{Pages}
+\srcfile{app/layout.tsx}{Root layout.}
+
+\srcfile{app/page.tsx}{Dashboard.}
+
+\srcfile{app/forms/new/page.tsx}{Builder page.}
+
+\srcfile{app/f/[formId]/page.tsx}{Public survey page.}
+
+\srcfile{app/forms/[id]/responses/page.tsx}{Responses page.}
+
+
+\end{document}
