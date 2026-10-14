@@ -1,0 +1,33 @@
+erDiagram
+    Form ||--|{ Question : "has"
+    Form ||--o{ Submission : "receives"
+    Submission ||--|{ Answer : "contains"
+    Question ||--o{ Answer : "answered by"
+
+    Form {
+        string id PK "cuid"
+        string title
+        string description "nullable"
+        boolean published "default true"
+        datetime createdAt
+    }
+    Question {
+        string id PK "cuid"
+        string formId FK
+        string label
+        string type "short_text, long_text, number, email, single_choice, multi_choice, date, file"
+        boolean required "default false"
+        string_array options "choice types only"
+        int order
+    }
+    Submission {
+        string id PK "cuid"
+        string formId FK
+        datetime createdAt
+    }
+    Answer {
+        string id PK "cuid"
+        string submissionId FK
+        string questionId FK
+        json value "string, number, string[] or S3 key"
+    }

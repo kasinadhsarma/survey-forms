@@ -1,0 +1,37 @@
+sequenceDiagram
+    autonumber
+    actor U as Respondent
+    participant P as Survey page
+    participant F as better-fetch
+    participant A as Hono API
+    participant D as PostgreSQL
+    participant S as S3 bucket
+
+    U->>P: Open /f/formId
+    P->>F: GET /forms/:id
+    F->>A: request
+    A->>D: load form + questions
+    D-->>A: rows
+    A-->>P: form (validated response)
+    P->>P: buildAnswerSchema(questions)
+
+    opt File question
+        P->>A: POST /uploads/presign (name, type, size)
+        A-->>P: presigned URL + key
+        P->>S: PUT file directly
+        S-->>P: 200 OK
+    end
+
+    U->>P: Submit answers
+    P->>P: zodResolver validates (client)
+    P->>F: POST /forms/:id/submissions
+    F->>A: request
+    A->>D: load questions
+    A->>A: buildAnswerSchema + validate (server)
+    alt Invalid
+        A-->>P: 400 VALIDATION_ERROR + issues
+    else Valid
+        A->>D: transaction: Submission + Answers
+        D-->>A: ok
+        A-->>P: 201 Created
+    end

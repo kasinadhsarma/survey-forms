@@ -1,0 +1,57 @@
+flowchart TB
+    subgraph Browser["Browser (Next.js client)"]
+        direction TB
+        P1["/ Dashboard"]
+        P2["/forms/new Builder"]
+        P3["/f/formId Public survey"]
+        P4["/forms/id/responses Results"]
+        RHF["react-hook-form + zodResolver"]
+        BF["better-fetch client (typed)"]
+        P1 --> BF
+        P2 --> RHF
+        P3 --> RHF
+        P4 --> BF
+        RHF --> BF
+    end
+
+    SH[["shared/schemas/<br/>question.ts, form.ts, submission.ts<br/>Zod API schemas + inferred types"]]
+
+    subgraph Next["Next.js server (Node runtime)"]
+        direction TB
+        RH["app/api/[[...route]]/route.ts<br/>hono/vercel handle()"]
+        subgraph Hono["Hono app (base path /api)"]
+            direction TB
+            R1["routes/forms.ts"]
+            R2["routes/submissions.ts"]
+            R3["routes/uploads.ts"]
+            ZV{{"zValidator<br/>json / param / query"}}
+        end
+        subgraph Repo["Repository layer"]
+            direction TB
+            RP1["repo/forms.ts"]
+            RP2["repo/submissions.ts"]
+            S3C["s3.ts presigner"]
+        end
+        PR["Prisma Client"]
+        RH --> ZV
+        ZV --> R1
+        ZV --> R2
+        ZV --> R3
+        R1 --> RP1
+        R2 --> RP2
+        R3 --> S3C
+        RP1 --> PR
+        RP2 --> PR
+    end
+
+    DB[("PostgreSQL<br/>Form, Question,<br/>Submission, Answer")]
+    S3[("S3-compatible bucket<br/>S3 / R2 / MinIO")]
+
+    BF -- "HTTP JSON" --> RH
+    BF -. "presigned PUT upload" .-> S3
+    PR --> DB
+    S3C -- "presigned URLs" --> S3
+
+    SH -. "imported by" .-> RHF
+    SH -. "imported by" .-> BF
+    SH -. "imported by" .-> ZV

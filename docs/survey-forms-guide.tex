@@ -9,6 +9,9 @@
 \usepackage{enumitem}
 \usepackage{listings}
 \usepackage{textcomp}
+\usepackage{graphicx}
+\usepackage{float}
+\graphicspath{{/home/claude/diagrams-v2/}}
 \usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
 
 \definecolor{codebg}{RGB}{245,245,247}
@@ -384,6 +387,337 @@ curl -X POST -H "Authorization: Bearer $SYNC_TOKEN" localhost:3000/api/sync
   \item \textbf{One-way sync and manual repair}, as described in Section~\ref{sec:integration}.
   \item \textbf{No Delete button.} Forms can only be deleted through the API.
 \end{itemize}
+
+
+\clearpage
+% ------------------------------------------------------------
+\section{Planned Extensions (Documentation Only)}\label{sec:extensions}
+% ------------------------------------------------------------
+This section describes how to close five gaps from the previous section. \textbf{None of it is implemented or tested.} It names the files to create or change, the rules to follow and the checks to run, so the work can be done step by step later. Names, paths and conventions are the same as in the rest of this guide.
+
+\begin{center}
+\begin{tabular}{@{}p{3.2cm}p{5.4cm}p{6.0cm}@{}}
+\toprule
+\textbf{Extension} & \textbf{Gap it closes} & \textbf{Main files}\\
+\midrule
+Delete button & Forms can only be deleted through the API & \path{components/DeleteFormButton.tsx}, \path{components/FormList.tsx}, \path{lib/fetch.ts}\\
+Form editing & A form cannot be changed after it is created & \path{app/forms/[id]/edit/page.tsx}, \path{components/FormBuilder.tsx}, \path{lib/server/routes/forms.ts}\\
+File limits & Files are capped at 700~KB and are left behind after a delete & \path{lib/server/repo/files.ts}, \path{lib/schemas/upload.ts}\\
+Sync & Repair is manual and copies everything & \path{prisma/schema.prisma}, \path{lib/server/repo/outbox.ts}, \path{lib/server/routes/sync.ts}\\
+Rate limiting & Any client can send unlimited requests & \path{lib/server/rateLimit.ts}, \path{lib/server/app.ts}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Read this first: login.} The delete and edit API calls are open to anyone who can reach the server, with or without a button in the screen. A button makes them easier to use, not easier to abuse. Before the delete button and form editing go live, add a login and make the owner of a form the only person who can change or delete it. This needs a \texttt{userId} on \texttt{Form}, a check in every write route, and a session that the routes can read. It is a separate piece of work and is not described here.
+
+% ------------------------------------------------------------
+\subsection{Delete button}
+% ------------------------------------------------------------
+\textbf{What already exists.} \texttt{DELETE /api/forms/:id} returns 204, or 404 when the form is missing, and removes the form from Postgres (questions, submissions and answers cascade) and from Firestore. Only the screen is missing.
+
+\textbf{Files.}
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}p{1.6cm}p{7.4cm}@{}}
+\toprule
+\textbf{File} & \textbf{Action} & \textbf{Change}\\
+\midrule
+\path{components/DeleteFormButton.tsx} & create & Button with a two-step confirmation and its own loading and error state\\
+\path{components/FormList.tsx} & update & Show the button on every row and remove the row after success\\
+\path{lib/fetch.ts} & update & Add the \texttt{DELETE} endpoint with params and an output schema that accepts an empty body\\
+\path{lib/responsive/pattrens/forms.ts} & update & Add a \texttt{deleteButtonPatterns} object for the button and the confirm row\\
+\path{lib/server/repo/forms.ts} & update & Also delete the files the form's answers point to (see Section~\ref{sec:filelimits})\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Rules.}
+\begin{enumerate}
+  \item \textbf{Confirm inside the page.} The first click turns the button into ``Delete this form and its N responses? Yes / Cancel''. Do not use \texttt{window.confirm}; it blocks the browser and cannot be styled with the patterns file. The response count is already in the list data.
+  \item \textbf{Disable while waiting.} The button is disabled and shows ``Deleting\ldots'' until the request ends, so a double click sends one request.
+  \item \textbf{Treat 404 as success.} If another tab already deleted the form, remove the row and show nothing.
+  \item \textbf{Empty body.} A 204 has no body, so the client schema for this endpoint must accept an empty response. Without that, the client reports a validation error for a delete that worked.
+  \item \textbf{Update the list from the result.} Remove the row from the list state after a 204 or 404 instead of reloading the whole list. On any other error, keep the row and show the message from \texttt{getErrorMessage}.
+\end{enumerate}
+
+\textbf{Check.} Delete a form that has a file answer. The row disappears, \texttt{GET /api/forms/:id} returns 404, \texttt{GET /api/files/:id} for its file returns 404, and the Firestore \texttt{forms/\{id\}} document and its \texttt{submissions} subcollection are gone.
+
+% ------------------------------------------------------------
+\subsection{Form editing}
+% ------------------------------------------------------------
+\textbf{The hard part.} Answers point to questions by id. If an edit replaced all questions with new rows, every old answer would lose its question. The design therefore keeps question ids stable and treats an edit as a set of per-question changes.
+
+\textbf{API.} \texttt{PUT /api/forms/:id} with a new \texttt{updateFormSchema}: the same fields as \texttt{createFormSchema}, but each question may carry an \texttt{id}. The 405 list for \texttt{/:id} becomes \texttt{GET, PUT, DELETE}.
+
+\textbf{Rules for each question in the payload.}
+\begin{center}
+\begin{tabular}{@{}p{4.4cm}p{10.2cm}@{}}
+\toprule
+\textbf{Case} & \textbf{What happens}\\
+\midrule
+Has an \texttt{id} that belongs to this form & Updated in place: label, required, options and position may change.\\
+Has no \texttt{id} & Created as a new question.\\
+Has an \texttt{id} from another form & Rejected with a 400. Check the id against the form's own questions.\\
+Existing question missing from the payload & Deleted, and its answers cascade. If the form has responses, the screen must warn first, and the server must require \texttt{confirmRemoval: true} in the body, otherwise it answers 409.\\
+Type changed on a question that has answers & Rejected with a 409. The type is locked once the question has an answer; to change it, delete the question and add a new one.\\
+Option removed that existing answers use & Allowed, but the old answers keep their stored text. The responses table shows them as they were saved. State this in the screen.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Files.}
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}p{1.6cm}p{7.4cm}@{}}
+\toprule
+\textbf{File} & \textbf{Action} & \textbf{Change}\\
+\midrule
+\path{lib/schemas/form.ts} & update & \texttt{updateFormSchema} and its type; \texttt{id} is optional on each input question\\
+\path{lib/server/repo/postgres/forms.ts} & update & \texttt{updateForm} inside one \texttt{prisma.\$transaction}: update the form, update or create each question, delete the removed ones, and renumber \texttt{position}\\
+\path{lib/server/repo/firestore/forms.ts} & reuse & \texttt{mirrorForm} already replaces the embedded question list; pass the stored response count so the counter is kept\\
+\path{lib/server/repo/forms.ts} & update & \texttt{updateForm}: Postgres first, then \texttt{mirrorSafely}\\
+\path{lib/server/routes/forms.ts} & update & \texttt{PUT /:id}, validated with the param and json validators; widen the 405 list\\
+\path{lib/fetch.ts} & update & \texttt{PUT} endpoint with input and output schemas\\
+\path{components/FormBuilder.tsx} & update & Accept an optional \texttt{initialForm}; in edit mode start from it, keep each question's \texttt{id} in the field array, and submit with \texttt{PUT}\\
+\path{components/QuestionField.tsx} & none & Not used by the builder\\
+\path{app/forms/[id]/edit/page.tsx} & create & Loads the form inside \texttt{Suspense}, then renders the builder in edit mode\\
+\path{components/FormList.tsx} & update & ``Edit'' link next to ``Responses''\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Notes.}
+\begin{itemize}
+  \item \textbf{One transaction.} Do the whole update in one database transaction so a failure part-way leaves the old form intact.
+  \item \textbf{Field array keys.} In react-hook-form, use \texttt{keyName} or a separate field for the \texttt{id}, because \texttt{useFieldArray} adds its own \texttt{id} to every item by default.
+  \item \textbf{Old responses.} The responses table builds its columns from the current questions, so a deleted question's column disappears and its stored answers are no longer shown.
+  \item \textbf{Concurrent edits.} Two editors saving at once will overwrite each other. A simple guard is an \texttt{updatedAt} value sent back with the edit; the server answers 409 when it no longer matches.
+\end{itemize}
+
+\textbf{Check.} Create a form, submit two responses, then edit: rename a question, add one, remove one, and try to change a type that has answers (expect 409). Open the responses page and confirm the old answers are still attached to the renamed question.
+
+\clearpage
+% ------------------------------------------------------------
+\subsection{File limits}\label{sec:filelimits}
+% ------------------------------------------------------------
+\textbf{Why the limit is 700~KB.} A file is stored as base64 text inside one Firestore document. Base64 adds about one third, and a document may not exceed 1~MiB, so 700~KB of file is about 950~KB of text plus the name and type. Raising the number in \path{lib/schemas/upload.ts} alone would make saves fail.
+
+\textbf{Options.}
+\begin{center}
+\begin{tabular}{@{}p{3.2cm}p{4.2cm}p{3.6cm}p{3.6cm}@{}}
+\toprule
+\textbf{Option} & \textbf{How it works} & \textbf{Gain} & \textbf{Cost}\\
+\midrule
+Chunks in Firestore & Split the bytes into pieces of about 500~KB, each its own document under \texttt{files/\{id\}/chunks/\{n\}} & Several MB, no new service & More reads per download; the API still carries every byte\\
+Cloud Storage bucket & Server signs a short-lived upload URL; the browser uploads straight to the bucket & Tens of MB; the API never handles file bytes & A bucket (the project may need a paid plan), bucket CORS, and a second kind of storage\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Recommendation.} Keep the three repository functions as they are (\texttt{saveFile}, \texttt{loadFile}, \texttt{fileExists}) so the routes do not change. Use chunks first if files up to a few MB are enough. Move to a bucket when larger files, video or many uploads are expected.
+
+\textbf{Steps for chunks.}
+\begin{enumerate}
+  \item In \path{lib/schemas/upload.ts}, set \texttt{MAX\_FILE\_BYTES} to the new limit (for example 5~MB) and add a \texttt{CHUNK\_BYTES} constant of 500~KB.
+  \item In \path{lib/server/repo/files.ts}, write the metadata document \texttt{files/\{id\}} (name, type, size, chunk count) and the chunks in a batched write. Stay inside the 500-operation limit of one batch.
+  \item In \texttt{loadFile}, read the chunks in order and join them. Return the same shape as today.
+  \item In the route, check the size before reading the file into memory, and set the same limit on the client check.
+  \item Delete files together with their chunks (\texttt{recursiveDelete}).
+\end{enumerate}
+
+\textbf{Hosting limit.} Many hosts limit the size of a request body that goes through a server function (for example about 4.5~MB on Vercel). Check your host before choosing a limit above that; this is the main reason to prefer a bucket with direct uploads.
+
+\textbf{Orphaned files.} Today deleting a form leaves its files in Firestore. Fix it in the repository facade: before deleting the form, read the file ids from the answers of its file questions, delete the form, then delete those files with \texttt{mirrorSafely} so a failure is logged and not returned. Also add a cleanup in the sync step for files that no answer points to and that are older than a day (an upload that was never submitted).
+
+\textbf{Other limits worth adding.} A total file size per form, a file count per submission (one file per file question already), and a content check that compares the file's first bytes with the declared type, because the browser's \texttt{file.type} can be wrong or faked.
+
+\textbf{Check.} Upload files just under and just over the new limit (expect 201 and 400), download a multi-chunk file and compare its checksum with the original, and delete a form to confirm no chunk documents remain.
+
+% ------------------------------------------------------------
+\subsection{Sync}
+% ------------------------------------------------------------
+\textbf{Gaps today.} Repair is manual, \texttt{syncAll} copies every form and submission each time, and a failed mirror write is only a line in the log, with nothing remembering which row failed.
+
+\textbf{Design: an outbox.} When a mirror write fails, the failure is stored in Postgres so it can be retried. This replaces ``log and forget'' in \texttt{mirrorSafely}.
+
+\begin{lstlisting}
+// prisma/schema.prisma (design)
+// Why: remembers a mirror write that failed, so it can be retried.
+model MirrorTask {
+  id        String   @id @default(cuid())
+  entity    String   // "form", "submission" or "file"
+  entityId  String
+  formId    String?  // needed to find a submission's parent
+  action    String   // "upsert" or "delete"
+  attempts  Int      @default(0)
+  lastError String?
+  createdAt DateTime @default(now())
+  @@index([createdAt])
+}
+\end{lstlisting}
+
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}p{1.6cm}p{7.4cm}@{}}
+\toprule
+\textbf{File} & \textbf{Action} & \textbf{Change}\\
+\midrule
+\path{prisma/schema.prisma} & update & Add \texttt{MirrorTask}, then \texttt{npx prisma migrate dev --name mirror\_task}\\
+\path{lib/server/repo/outbox.ts} & create & \texttt{recordFailure}, \texttt{processTasks} (retry in age order, delete the task on success, count attempts and keep the error on failure)\\
+\path{lib/server/repo/dual.ts} & update & On a mirror error call \texttt{recordFailure}; if that also fails, log it\\
+\path{lib/server/repo/sync.ts} & update & Add \texttt{processTasks} before the full comparison, and report the number of waiting tasks in the status\\
+\path{lib/server/routes/sync.ts} & update & \texttt{POST /api/sync/retry} runs only the outbox; \texttt{status} adds \texttt{pendingTasks}\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Running it on a schedule.} The app has no scheduler, so something outside it calls the endpoint with the bearer token. Choose one:
+\begin{itemize}
+  \item the host's scheduled jobs, if it offers them (check whether they send a \texttt{GET} or a \texttt{POST}; the route accepts only the method it declares, so match it or add a second route);
+  \item a scheduled GitHub Actions workflow that runs \texttt{curl -X POST -H "Authorization: Bearer \$SYNC\_TOKEN"} against \texttt{/api/sync/retry} every few minutes and \texttt{/api/sync} once a day;
+  \item any external cron service.
+\end{itemize}
+Store the token as a secret of that service and never in the repository.
+
+\textbf{Make the full sync cheaper.} Add \texttt{updatedAt} to \texttt{Form} (Prisma's \texttt{@updatedAt}) and let a daily sync copy only forms changed since the last run, keeping the full comparison for a weekly run. Submissions are never edited, so only new ones need copying.
+
+\textbf{Alerts.} Call \texttt{GET /api/sync/status} on a schedule and notify someone when \texttt{inSync} is false or \texttt{pendingTasks} keeps growing.
+
+\textbf{Decision to keep.} Sync stays one-way: Postgres wins. Two-way sync needs conflict rules and is out of scope.
+
+\textbf{Check.} Stop Firestore access (use a wrong key), create a form (the request still succeeds), confirm a \texttt{MirrorTask} row exists, restore the key, call \texttt{/api/sync/retry}, and confirm the row is gone and the form appears in Firestore.
+
+\clearpage
+% ------------------------------------------------------------
+\subsection{Rate limiting}
+% ------------------------------------------------------------
+\textbf{Why.} The survey page and its submit and upload routes are public. Without a limit, one client can fill a form with junk, upload files until storage grows, or make the server call the databases without end.
+
+\textbf{Where.} One Hono middleware in \path{lib/server/rateLimit.ts}, registered in \path{lib/server/app.ts} before the route groups, so every path is counted, including paths that answer 405. The sync routes stay protected by their token and are not counted.
+
+\textbf{Proposed limits} (per client, per minute; tune them with real traffic):
+\begin{center}
+\begin{tabular}{@{}p{5.8cm}p{3.0cm}p{5.8cm}@{}}
+\toprule
+\textbf{Route group} & \textbf{Limit} & \textbf{Reason}\\
+\midrule
+\texttt{POST /api/forms/\allowbreak{}:id/\allowbreak{}submissions} & 10 per minute & A person answers a form a few times at most\\
+\texttt{POST /api/files} & 5 per minute & Uploads are the most expensive request\\
+\texttt{POST /api/forms}, \texttt{PUT}, \texttt{DELETE} & 20 per minute & Owner actions; stricter once there is a login\\
+All other \texttt{GET} requests & 120 per minute & Page loads and polling\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Rules.}
+\begin{enumerate}
+  \item \textbf{Client key.} Use the IP address. Behind a proxy or host the real address is in \texttt{X-Forwarded-For}; read only the value your host sets, and ignore the header when the app is reachable directly, otherwise a client can invent its own address and avoid the limit.
+  \item \textbf{Answer.} When a client is over the limit, return 429 with the usual error body (code \texttt{rate\_limited}), a \texttt{Retry-After} header in seconds, and the same headers on normal responses (\texttt{RateLimit-Limit}, \texttt{RateLimit-Remaining}) so a client can slow down early.
+  \item \textbf{Algorithm.} A sliding window is fairer than a fixed window, which lets a client send a full limit at the end of one minute and again at the start of the next.
+  \item \textbf{Fail open or closed.} If the limit store is unreachable, let the request through and log it for public reads, but refuse writes. A broken limiter should not take the survey page down.
+\end{enumerate}
+
+\textbf{Where to keep the counters.}
+\begin{center}
+\begin{tabular}{@{}p{3.6cm}p{5.4cm}p{5.6cm}@{}}
+\toprule
+\textbf{Store} & \textbf{Works when} & \textbf{Problem}\\
+\midrule
+Memory of the process (a \texttt{Map}) & One server that stays running (local, one container) & Resets on restart, and every server function instance has its own counters, so the real limit is higher\\
+Redis (for example Upstash with its rate-limit library) & Several instances or serverless; this is the normal choice & A new service and an environment variable for its address and token\\
+Postgres table & No new service is wanted & A write on every request; fine for low traffic only\\
+\bottomrule
+\end{tabular}
+\end{center}
+Start with the in-memory store behind a small interface (\texttt{hit(key, limit, windowSeconds)}) and swap the store when the app runs on more than one instance.
+
+\textbf{Related protections, outside the limiter.}
+\begin{itemize}
+  \item A bot check (for example a Turnstile or reCAPTCHA token) on the public submit route, verified on the server.
+  \item A maximum JSON body size, so a very large body is refused before it is parsed.
+  \item A hidden ``honeypot'' field in the survey form that real people leave empty; a filled value is rejected.
+\end{itemize}
+
+\textbf{Check.} Send 11 submissions in a minute with a shell loop; the first 10 return 201 and the 11th returns 429 with \texttt{Retry-After}. Wait for the window and confirm the next request succeeds. Confirm \texttt{GET /api/sync/status} with a valid token is never limited.
+
+% ------------------------------------------------------------
+\subsection{Suggested order}
+% ------------------------------------------------------------
+\begin{enumerate}
+  \item Login and form ownership (prerequisite for the delete button and editing).
+  \item Rate limiting (small, and protects everything below).
+  \item Delete button, including deleting a form's files.
+  \item Sync outbox and a scheduled call.
+  \item Form editing.
+  \item File limits (chunks or a bucket).
+\end{enumerate}
+After each step run the checks from Step~12 (\texttt{prettier}, \texttt{tsc}, \texttt{eslint}, \texttt{npm run build}) and the \texttt{Check} paragraph of that extension.
+
+\clearpage
+% ------------------------------------------------------------
+\section{Database Schema (Mermaid ER Diagram)}\label{sec:schema}
+% ------------------------------------------------------------
+Figure~\ref{fig:schema} shows the four PostgreSQL models from Step~4 and how they relate. Deleting a form cascades to its questions and submissions, and deleting a submission or a question cascades to its answers.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.95\linewidth,height=0.42\textheight,keepaspectratio]{schema.pdf}
+  \caption{Entity-relationship diagram of the PostgreSQL database (source of truth).}
+  \label{fig:schema}
+\end{figure}
+
+\begin{itemize}
+  \item \texttt{Question.type} is stored as text and restricted by the Zod enum at the API boundary.
+  \item \texttt{Question.options} is a text array, used only by the two choice types.
+  \item \texttt{Answer} stores a number in \texttt{number} and everything else (text, a JSON list for multi-choice, or a file id) in \texttt{text}. Empty answers are not stored.
+  \item \texttt{Question.position} keeps the order of the questions inside a form.
+\end{itemize}
+
+\subsection{Firestore layout}
+Firestore is the mirror and the file store. Figure~\ref{fig:firestore} shows its collections. Every document uses the same id as its Postgres row, which is what lets the sync endpoint compare and repair the two databases by id.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.5\linewidth,height=0.3\textheight,keepaspectratio]{firestore.pdf}
+  \caption{Firestore collections and how they relate to PostgreSQL.}
+  \label{fig:firestore}
+\end{figure}
+
+\clearpage
+% ------------------------------------------------------------
+\section{System Architecture (Mermaid Flowchart)}\label{sec:architecture}
+% ------------------------------------------------------------
+Figure~\ref{fig:arch} shows the layers. The shared Zod schemas are imported by the form, the HTTP client and the API validator. Routes never touch a database directly: they call the repository layer, which writes to PostgreSQL first and mirrors to Firestore, and reads from PostgreSQL with Firestore as the fallback. Files bypass PostgreSQL and live only in Firestore.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.78\linewidth,height=0.82\textheight,keepaspectratio]{architecture.pdf}
+  \caption{Architecture of the application.}
+  \label{fig:arch}
+\end{figure}
+
+\clearpage
+% ------------------------------------------------------------
+\section{Request Flows (Mermaid Sequence Diagrams)}\label{sec:sequence}
+% ------------------------------------------------------------
+\subsection{Submitting a response}
+Figure~\ref{fig:seqwrite} follows one submission, including an optional file upload. The answers are validated twice with the same schema, in the browser and on the server, and the server also checks that every file answer is the id of a stored file.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\linewidth,height=0.68\textheight,keepaspectratio]{sequence_write.pdf}
+  \caption{Submitting a response: upload, validation, Postgres write and Firestore mirror.}
+  \label{fig:seqwrite}
+\end{figure}
+
+\clearpage
+\subsection{Reading with fallback, and repairing with sync}
+Figure~\ref{fig:seqread} shows a read that falls back to Firestore when PostgreSQL throws, and the two token-protected sync calls an operator runs after an outage or a restore.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.92\linewidth,height=0.68\textheight,keepaspectratio]{sequence_read.pdf}
+  \caption{Read fallback and the sync endpoints.}
+  \label{fig:seqread}
+\end{figure}
 
 \newpage
 % ------------------------------------------------------------
@@ -2564,5 +2898,27 @@ export default function ResponsesPage(
 }
 \end{lstlisting}
 
+
+\clearpage
+% ------------------------------------------------------------
+\section*{Appendix: Mermaid Sources}
+\addcontentsline{toc}{section}{Appendix: Mermaid Sources}
+% ------------------------------------------------------------
+The diagrams above were rendered from these Mermaid sources. They can be pasted into the Mermaid Live Editor, a GitHub README, or any Mermaid-aware viewer.
+
+\subsection*{Database schema (\texttt{schema.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/schema.mmd}
+
+\subsection*{Firestore layout (\texttt{firestore.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/firestore.mmd}
+
+\subsection*{Architecture (\texttt{architecture.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/architecture.mmd}
+
+\subsection*{Submission sequence (\texttt{sequence\_write.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/sequence_write.mmd}
+
+\subsection*{Read fallback and sync sequence (\texttt{sequence\_read.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/sequence_read.mmd}
 
 \end{document}
