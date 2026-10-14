@@ -1,0 +1,62 @@
+{
+  "name": "survey-forms",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint"
+  },
+  "//": {
+    "@better-fetch/fetch": "Modern TypeScript-first fetch wrapper; alternative to Axios/ofetch that improves on native fetch",
+    "@hono/zod-validator": "Validates Hono API request bodies/params with Zod schemas",
+    "@hookform/resolvers": "Connects Zod schemas to react-hook-form for form validation",
+    "@prisma/adapter-pg": "Lets Prisma use the node-postgres (pg) driver to talk to PostgreSQL",
+    "@prisma/client": "Type-safe database client generated from the Prisma schema",
+    "dotenv": "Loads environment variables from .env files (DB URL, Firebase credentials)",
+    "firebase-admin": "Server-side Firebase SDK; verifies user auth tokens",
+    "hono": "Lightweight web framework for the API routes",
+    "next": "React framework for pages, routing, and server rendering",
+    "pg": "PostgreSQL driver used by the Prisma adapter",
+    "react": "UI library",
+    "react-dom": "Renders React components in the browser",
+    "react-hook-form": "Performant form state management for the survey forms",
+    "zod": "Schema validation shared between client forms and API",
+    "@tailwindcss/turbopack": "Tailwind CSS integration for Next.js Turbopack builds",
+    "@types/node": "TypeScript types for Node.js APIs",
+    "@types/react": "TypeScript types for React",
+    "@types/react-dom": "TypeScript types for React DOM",
+    "eslint": "Linter for catching code issues",
+    "eslint-config-next": "Next.js recommended ESLint rules",
+    "tailwindcss": "Utility-first CSS framework for styling",
+    "typescript": "Static typing for the codebase"
+  },
+  
+  "dependencies": {
+    "@better-fetch/fetch": "^1.3.2",
+    "@hono/zod-validator": "^0.9.1",
+    "@hookform/resolvers": "^5.9.1",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "dotenv": "^18.0.7",
+    "firebase-admin": "^14.5.0",
+    "hono": "^4.13.13",
+    "next": "16.4.0",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-hook-form": "^7.90.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.0",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
