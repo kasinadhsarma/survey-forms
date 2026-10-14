@@ -25,7 +25,13 @@ export async function listForms(): Promise<FormSummary[]> {
 export async function getForm(id: string): Promise<Form | null> {
   const row = await prisma.form.findUnique({
     where: { id },
-    include: { questions: { orderBy: { order: 'asc' } } },
+    include: { questions: 
+      { 
+        orderBy: { 
+          order: 'asc' 
+        } 
+      } 
+  },
   });
   if (!row) {
     return null;
@@ -44,10 +50,19 @@ export async function createForm(input: CreateFormInput): Promise<Form> {
       title: input.title,
       description: input.description ?? null,
       questions: {
-        create: input.questions.map((q, order) => ({ ...q, order })),
+        create: input.questions.map((q, order) => ({ 
+          ...q, 
+          order 
+        })),
       },
     },
-    include: { questions: { orderBy: { order: 'asc' } } },
+    include: { 
+      questions: { 
+        orderBy: { 
+          order: 'asc' 
+        } 
+      } 
+    },
   });
   return formSchema.parse({ 
     ...row, 

@@ -763,6 +763,200 @@ Figure~\ref{fig:roadmap} shows which extension depends on which, and matches the
   \label{fig:roadmap}
 \end{figure}
 
+\clearpage
+% ------------------------------------------------------------
+\section{Imperative and Declarative Programming: Where Each Is Used}\label{sec:styles}
+% ------------------------------------------------------------
+\textbf{Two styles.} \emph{Imperative} code says \emph{how}: a sequence of steps that change state, in a fixed order (do this, then this, if that fails do that). \emph{Declarative} code says \emph{what}: a description of the result or the rules, and something else (a library, the database, the framework) decides the steps. Real programs mix both. This project uses declarative code for rules, shapes and layout, and imperative code where the order of side effects matters.
+
+\textbf{Rule of thumb used here.} If the code is a rule that more than one place must share or inspect (validation, data shape, routes, styling), write it declaratively. If the code must do things in a strict order with side effects (write to a database, then mirror, then recover from a failure), write it imperatively and make the order visible.
+
+\subsection{Where the project is declarative}
+\begin{center}
+\begin{tabular}{@{}p{3.6cm}p{4.0cm}p{7.0cm}@{}}
+\toprule
+\textbf{Place} & \textbf{Files} & \textbf{What is declared}\\
+\midrule
+Validation rules & \path{lib/schemas/*.ts} & Zod describes what a valid form, question, answer or upload looks like. The browser, the API validator and the repository all reuse the same description.\\
+Per-form answer rules & \texttt{buildAnswerSchema} in \path{lib/schemas/submission.ts} & Builds the rule object from a form's questions, one entry per question, without saying how to check each answer.\\
+Database model & \path{prisma/schema.prisma} & The four models, their fields and relations, including cascade deletes. Prisma decides the SQL and the migration.\\
+Database queries & \path{lib/server/repo/postgres/*.ts} & Prisma calls such as \texttt{findMany(\{ where, orderBy, include \})} describe the rows wanted, not how to fetch them.\\
+Routes and middleware & \path{lib/server/routes/*.ts}, \path{lib/server/app.ts} & A table of method, path, validator and handler. Hono matches and runs them.\\
+Folder routing & \path{app/} & The folder structure declares the pages (\texttt{app/f/[formId]/page.tsx} is the URL \texttt{/f/:formId}).\\
+Typed API client & \path{lib/fetch.ts} & Every endpoint is listed once with its input, output, params and query schemas.\\
+User interface & \path{components/*.tsx}, \path{app/**/page.tsx} & JSX describes the screen for the current state, including the loading fallback in \texttt{Suspense}. React decides how to update the page.\\
+Styling & \path{lib/responsive/pattrens/forms.ts} & Tailwind class strings describe how an element looks, grouped by role.\\
+Form behaviour & react-hook-form with \texttt{zodResolver} & The resolver is given the schema; the library runs the checks and tracks errors.\\
+Configuration & \path{prisma.config.ts}, \path{postcss.config.mjs}, \path{tsconfig.json}, \path{.prettierrc}, \path{.env.example} & Settings objects and files that describe the setup.\\
+Documentation & \path{*.tex}, \path{*.mmd} & LaTeX and Mermaid describe the page and the diagrams; the tools draw them.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two real examples from the source code:
+\begin{lstlisting}
+// Declarative: what rows are wanted (lib/server/repo/postgres/forms.ts)
+const rows = await prisma.form.findMany({
+  orderBy: { createdAt: 'desc' },
+  include: { _count: { select: { questions: true, submissions: true } } },
+});
+
+// Declarative: what a valid answer is (lib/schemas/submission.ts)
+case 'email':
+  schema = z.union([z.literal(''), z.email('Enter a valid email')]);
+  break;
+\end{lstlisting}
+
+\subsection{Where the project is imperative}
+\begin{center}
+\begin{tabular}{@{}p{3.6cm}p{4.0cm}p{7.0cm}@{}}
+\toprule
+\textbf{Place} & \textbf{Files} & \textbf{Why the steps are spelled out}\\
+\midrule
+Saving a submission & \texttt{createSubmission} in \path{lib/server/repo/postgres/submissions.ts} & Loops over the questions, skips empty answers, stores numbers as numbers and the rest as text, then writes once.\\
+Request handling & \path{lib/server/routes/submissions.ts} & Checks run in a fixed order with early returns: form exists, body is valid, answers are valid, every file id exists, then save. The order decides which error the client sees.\\
+Write then mirror & \path{lib/server/repo/forms.ts}, \path{submissions.ts}, \path{dual.ts} & Postgres must commit first, and only then is Firestore written. This order is the design.\\
+Failure handling & \texttt{mirrorSafely}, \texttt{readWithFallback} & \texttt{try} and \texttt{catch} control what happens when a database fails: log and continue, or retry on the other store.\\
+Counters and transactions & \path{lib/server/repo/firestore/submissions.ts} & Read the document, then write it and increase the counter only if it did not exist, all inside one transaction.\\
+Sync & \texttt{getSyncStatus}, \texttt{syncAll} in \path{lib/server/repo/sync.ts} & Loops over every form, copies submissions, sets the real counter last, then removes strays. Order matters, so it is written step by step.\\
+Answer mapping & \texttt{toAnswerMap} & A loop that builds the answer map row by row.\\
+File upload in the browser & \texttt{handleFileChange} in \path{components/FileUploadField.tsx} & Validate, set the status, call the API, upload, store the id, each step reacting to the one before.\\
+Event handlers and loaders & \path{lib/useLoad.ts}, submit handlers in the components & Respond to a click or a load by running steps and updating state.\\
+Method guard & \path{lib/server/methods.ts} & Registers the \texttt{OPTIONS} and catch-all handlers in a defined order after the real handlers.\\
+Shell commands & Steps 1 to 13 and \texttt{curl} checks & A list of commands run in order.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two real examples from the source code:
+\begin{lstlisting}
+// Imperative: build the rows step by step (createSubmission)
+for (const question of form.questions) {
+  const value = answers[question.id];
+  if (value === undefined || value === '' || value.length === 0) {
+    continue; // empty answers are not stored
+  }
+  if (question.type === 'number') {
+    rows.push({ questionId: question.id, text: null, number: Number(value) });
+  } else {
+    const text = Array.isArray(value) ? JSON.stringify(value) : value;
+    rows.push({ questionId: question.id, text, number: null });
+  }
+}
+
+// Imperative: the order is the design (lib/server/repo/forms.ts)
+const form = await postgres.createForm(input);
+await mirrorSafely(() => firestore.mirrorForm(form));
+return form;
+\end{lstlisting}
+
+\subsection{Where the two meet}
+\begin{itemize}
+  \item \textbf{A route.} \texttt{forms.post('/', validate('json', createFormSchema), async (c) => \{ ... \})}: the route and its validator are declared; the handler body is imperative.
+  \item \textbf{A React component.} The returned JSX is declarative (what the screen shows); the event handlers and the effects that load data are imperative (what to do when something happens).
+  \item \textbf{Array methods.} \texttt{rows.map(...)} and \texttt{filter(...)} describe a transformation of a list and are used for pure conversions, for example turning Prisma rows into response objects. A \texttt{for} loop is used when a step has side effects or must stop early.
+  \item \textbf{Schema-driven code.} \texttt{buildAnswerSchema} is imperative inside (a loop that fills an object) but returns a declarative description that the rest of the program uses.
+\end{itemize}
+
+\subsection{Pure functions}\label{sec:pure}
+\textbf{Definition.} A pure function returns the same result for the same arguments and changes nothing outside itself: no database call, no network request, no \texttt{console.log}, no reading of \texttt{process.env}, no clock or random number, and no change to its arguments. Pure functions are the easiest code to read, reuse and test, because a test only passes arguments and checks the result.
+
+\textbf{Pure functions in this project.}
+\begin{center}
+\begin{tabular}{@{}p{3.5cm}p{4.2cm}p{6.9cm}@{}}
+\toprule
+\textbf{Function} & \textbf{File} & \textbf{Why it is pure}\\
+\midrule
+\texttt{isChoiceType} & \path{lib/schemas/question.ts} & Compares a type string with two names and returns a boolean.\\
+\texttt{answerSchemaFor} & \path{lib/schemas/submission.ts} & Turns one question into a Zod rule. The same question always gives an equivalent rule, and nothing is read or written.\\
+\texttt{buildAnswerSchema} & \path{lib/schemas/submission.ts} & Fills a new object from a list of questions and returns it. It changes only its own local object, never the questions.\\
+\texttt{errorBody} & \path{lib/server/errors.ts} & Builds the error object from its three arguments.\\
+\texttt{toAnswerMap} & \path{lib/server/repo/postgres/submissions.ts} & Builds a new answer map from a form and stored rows. Its loop changes only the local map.\\
+Row-to-response \texttt{map} calls & \texttt{listForms}, \texttt{listSubmissions}, \texttt{listAllSubmissions} (the \texttt{rows.map(...)} part) & Convert each row into a response object, for example a \texttt{Date} to an ISO string.\\
+Issue mapping & \texttt{validate} in \path{lib/server/validate.ts} and the submissions route & \texttt{issues.map(...)} turns validator issues into \texttt{\{ path, message \}} pairs.\\
+Schema checks & \texttt{schema.safeParse(...)} on a Zod schema & Decides valid or invalid from the value alone. The result is data (success or issues), not an exception.\\
+React render & The returned JSX of each component & A component should return the same screen for the same props and state. Side effects belong in event handlers and loaders, not in the render.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Two real examples:
+\begin{lstlisting}
+// Pure: same input, same output, no side effects (lib/schemas/question.ts)
+export function isChoiceType(type: QuestionType): boolean {
+  return type === 'single_choice' || type === 'multi_choice';
+}
+
+// Pure: builds a value from its arguments only (lib/server/errors.ts)
+export function errorBody(code: string, message: string, issues?: unknown) {
+  return {
+    error: { code, message, ...(issues === undefined ? {} : { issues }) },
+  };
+}
+\end{lstlisting}
+
+\textbf{Mostly pure, with one exception.} \texttt{requireOptionsForChoice} in \path{lib/schemas/question.ts} decides whether a question is valid, but it reports the problem by calling \texttt{ctx.addIssue(...)}, which changes the Zod context it was given. This is the normal Zod pattern, so it is accepted, and the change stays inside the validation run.
+
+\textbf{Where pure functions are \emph{not} used, and why.}
+\begin{center}
+\begin{tabular}{@{}p{5.6cm}p{9.0cm}@{}}
+\toprule
+\textbf{Code} & \textbf{Side effect that makes it impure}\\
+\midrule
+\path{lib/server/repo/postgres/*.ts} & Reads and writes PostgreSQL through Prisma.\\
+\path{lib/server/repo/firestore/*.ts}, \path{files.ts} & Reads and writes Firestore.\\
+\texttt{mirrorSafely}, \texttt{readWithFallback} & Run a task and log errors with \texttt{console.error}.\\
+\texttt{getSyncStatus}, \texttt{syncAll} & Query and write both databases.\\
+\texttt{saveFile} & Uses a random id and writes a document.\\
+\path{lib/server/env.ts} (\texttt{getDatabaseEnv}, \texttt{getFirebaseEnv}, \texttt{getSyncToken}) & Reads \texttt{process.env}, so the result depends on the environment.\\
+\path{lib/server/db.ts}, \path{lib/server/firestore.ts} & Create and keep a shared client on \texttt{globalThis} or in the Firebase app list.\\
+\texttt{methodNotAllowed} & Registers handlers on the Hono app (it changes the app it receives).\\
+Route handlers and \texttt{app.ts} & Read the request, call the repositories and return a response.\\
+\path{lib/fetch.ts} calls and \texttt{FileUploadField} & Make network requests and update component state.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Keep the pure part and the effect apart.} Many functions mix both. The planned improvement, not yet done, is to pull the pure decision out of the function that does the input and output, so it can be tested alone:
+\begin{center}
+\begin{tabular}{@{}p{4.2cm}p{5.2cm}p{5.0cm}@{}}
+\toprule
+\textbf{Today} & \textbf{Pure part to extract} & \textbf{Effect that stays}\\
+\midrule
+\texttt{createSubmission} (Postgres) & \texttt{buildAnswerRows(form, answers)}: the loop that skips empty answers and splits numbers from text & \texttt{prisma.submission.create(...)}\\
+\texttt{getSyncStatus} & \texttt{diffIds(postgresIds, firestoreIds)}: the \texttt{missing} and \texttt{only} lists and the \texttt{inSync} flag & The queries that fetch the ids and counts\\
+Rate limiter (planned) & \texttt{decide(count, limit, windowSeconds)}: returns allow, or block with a retry time & Reading and writing the counter in the store\\
+Form update (planned) & \texttt{plan\allowbreak{}Question\allowbreak{}Changes(\allowbreak{}old\allowbreak{}Questions,\allowbreak{} new\allowbreak{}Questions)}: returns which to create, update and delete & The transaction that applies them\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Rules for new code.}
+\begin{enumerate}
+  \item Put pure helpers in \path{lib/schemas/} or in a small file next to the code that uses them, and do not import a database client, \texttt{process.env} or \texttt{fetch} into them.
+  \item Do not change an argument. Build and return a new object instead of editing the one that was passed in.
+  \item Give the function the time or random id as an argument when it needs one, so a test can pass a fixed value.
+  \item Test pure functions first. They need no database, no Firebase key and no running server, so \texttt{npx tsx} or a test runner can call them directly with sample questions and answers.
+\end{enumerate}
+
+\subsection{Planned extensions}
+\begin{center}
+\begin{tabular}{@{}p{4.2cm}p{4.0cm}p{6.4cm}@{}}
+\toprule
+\textbf{Extension} & \textbf{Style} & \textbf{Reason}\\
+\midrule
+\texttt{updateFormSchema} & Declarative & Another shared rule, reused by the browser and the API.\\
+\texttt{MirrorTask} model & Declarative & A new model in the Prisma schema.\\
+Rate-limit middleware & Imperative & Count a request, compare it with the limit, then allow it or return 429.\\
+Outbox processing & Imperative & Retry tasks in age order, delete on success, count attempts on failure.\\
+Form update in one transaction & Imperative & Update, create and delete questions in a fixed order.\\
+Limits table (per route group) & Declarative & A small object that maps a route group to a limit; the middleware reads it.\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Guideline for new code.} Put the rule or shape in a declarative form first (a schema, a model, a config object). Write the imperative function that uses it second, keep it short, give it a doc comment, and keep each \texttt{if} in braces so the order of steps is easy to read. Do not hide side effects inside a declarative-looking expression.
+
 \newpage
 % ------------------------------------------------------------
 \section{Source Code}\label{sec:code}

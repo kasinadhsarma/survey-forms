@@ -48,13 +48,22 @@ function answerSchemaFor(question: Question): z.ZodType<unknown> {
       });
       break;
     case 'email':
-      schema = z.union([z.literal(''), z.email('Enter a valid email')]);
+      schema = z.union([
+        z.literal(''), 
+        z.email('Enter a valid email')
+      ]);
       break;
     case 'date':
-      schema = z.union([z.literal(''), z.iso.date('Enter a valid date')]);
+      schema = z.union([
+        z.literal(''), 
+        z.iso.date('Enter a valid date')
+      ]);
       break;
     case 'file':
-      schema = z.union([z.literal(''), fileIdSchema]);
+      schema = z.union([
+        z.literal(''), 
+        fileIdSchema
+      ]);
       break;
     case 'single_choice':
       schema = z.union([
@@ -63,7 +72,9 @@ function answerSchemaFor(question: Question): z.ZodType<unknown> {
       ]);
       break;
     case 'multi_choice':
-      schema = z.array(z.enum(question.options as [string, ...string[]]));
+      schema = z.array(
+        z.enum(question.options as [string, ...string[]]
+        ));
       break;
     default:
       schema = z.string().max(5000);
