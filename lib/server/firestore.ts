@@ -12,17 +12,16 @@ import { getFirebaseEnv } from './env';
  */
 
 export function getDb():Firestore{
-    if(getApps().length===0){
-        const env = getFirebaseEnv();
-
+    const env = getFirebaseEnv();
+    const app = 
+        getApps()[0] ??
         initializeApp({
-            credential:cert({
+            credential: cert({
                 projectId: env.FIREBASE_PROJECT_ID,
                 clientEmail: env.FIREBASE_CLIENT_EMAIL,
-                privateKey: env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n'
-                ),
+                privateKey: env.FIREBASE_PRIVATE_KEY.replace(/\\n/g,'\n'),
             }),
         });
-    }
-    return getFirestore();
+
+    return getFirestore(app);
 }

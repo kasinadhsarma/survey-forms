@@ -11,20 +11,17 @@ const globalForPrisma = globalThis as unknown as{
  */
 function createClient(): PrismaClient{
     const adapter = new PrismaPg({
-        connectionString:getDatabaseEnv().DATABASE_URL
+        connectionString:getDatabaseEnv().DATABASE_URL,
     });
     return new PrismaClient({adapter});
 }
 
 /**
- * Returns one shared prisma client
- * singleton will hot this reloading in the devlopment
- * other wise open a new connection pool on every file change
+ * Why global This: hot reloading re-runs this module a new client each
+ * time would open a new connection pool.
  */
 
-export function getPrisma(): PrismaClient{
-    if (!globalForPrisma.prisma){
-        globalForPrisma.prisma = createClient();
-    }
-    return globalForPrisma.prisma
+export const prisma = globalForPrisma.prisma ?? createClient();
+if (process.env.NODE_ENV !== 'production'){
+    globalForPrisma.prisma = prisma;
 }
