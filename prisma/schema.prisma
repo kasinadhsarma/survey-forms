@@ -23,7 +23,69 @@ model Form{
   submissions Submissions[]
 }
 
+/// Form: one survey created by an author. It holds the title and
+/// description, and is the parent of its questions and its submissions.
+/// Deleting a form cascades to everything below it.
+model Form {
+  id          String       @id @default(cuid())
+  /// title of the form 
+  title       String
+  /// description of the form
+  description String?
+  /// published true or false boolean published
+  published   Boolean      @default(true)
+  /// created date of the question 
+  createdAt   DateTime     @default(now())
+  questions   Question[]
+  submissions Submission[]
+}
 
-// Question: One survey created by an author . It holds the title and 
-// Description and is the parent of its questions and it's submissions
-// Deleting a form cascades 
+/// Question: one prompt inside a form. It is stored in its own table
+/// (not as JSON on Form) so questions can be ordered, validated and
+/// referenced by answers.
+model Question {
+  id       String   @id @default(cuid())
+  formId   String
+  form     Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  label    String
+  /// short_text, long_text, number, email, single_choice, multi_choice,
+  /// date, file. Checked by the Zod enum at the API, kept as text in the DB.
+  type     String
+  required Boolean  @default(false)
+  /// Choices for single_choice and multi_choice; empty for other types
+  options  String[]
+  /// Position of the question inside the form
+  order    Int
+  answers  Answer[]
+
+  @@index([formId, order])
+}
+
+/// Submission: one respondent's completed attempt at a form. It groups
+/// that person's answers together and records when they submitted.
+model Submission {
+  id        String   @id @default(cuid())
+  formId    String
+  form      Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  answers   Answer[]
+
+  @@index([formId, createdAt])
+}
+
+/// Answer: the value given to one question inside one submission. It
+/// links a Submission to a Question, so every response keeps its
+/// question and can be shown in a table or exported.
+model Answer {
+  id           String     @id @default(cuid())
+  submissionId String
+  submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  questionId   String
+  question     Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  /// JSON so one column can hold a string, a number, a string array,
+  /// or the id of an uploaded file
+  value        Json
+
+  /// A submission can answer each question only once
+  @@unique([submissionId, questionId])
+}
