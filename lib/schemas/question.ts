@@ -3,7 +3,7 @@ import {z} from "zod";
 export const questionTypes = [
     'short_text',
     'long_text',
-    'multiple_choice',
+    'multi_choice',
     'checkboxes',
     'dropdown',
     'linear_scale',
@@ -11,8 +11,7 @@ export const questionTypes = [
     'time' ,
     'email' , 
     'file' ,
-    'single choice' ,
-    'multiple choice' ,
+    'single_choice' ,
     'rating' , 
     'ranking' ,
     'matrix' ,
@@ -29,7 +28,7 @@ export type QuestionType = z.infer<typeof questionTypeSchema>;
 
 /** True for the types that need a list options */
 export function isChoiceType(type: QuestionType): boolean {
-    return type === 'single choice' || type === 'multiple choice' || type === 'checkboxes' || type === 'dropdown' || type === 'image_choice';
+    return type === 'single_choice' || type === 'multi_choice' || type === 'checkboxes' || type === 'dropdown' || type === 'image_choice';
 }
 
 
