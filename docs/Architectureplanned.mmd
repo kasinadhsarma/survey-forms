@@ -1,0 +1,81 @@
+flowchart LR
+    subgraph Browser["Browser (Next.js client)"]
+        direction TB
+        RHF["react-hook-form<br/>+ zodResolver"]
+        BF["better-fetch<br/>lib/fetch.ts"]
+        UP["FileUploadField<br/>plain fetch + FormData"]
+        DEL["DeleteFormButton<br/>(planned)"]
+        EDT["Edit page + FormBuilder<br/>edit mode (planned)"]
+        RHF --> BF
+        DEL --> BF
+        EDT --> BF
+    end
+
+    SH{{"Shared Zod schemas<br/>lib/schemas/*.ts<br/>+ updateFormSchema (planned)"}}
+
+    subgraph Next["Next.js server (one deployment)"]
+        direction TB
+        RH["app/api/[[...route]]/route.ts<br/>hono/vercel handle()"]
+        subgraph Hono["Hono app (lib/server/app.ts)"]
+            direction TB
+            RL["rateLimit middleware<br/>429 + Retry-After (planned)"]
+            AUTH["auth middleware<br/>owner check (planned, separate work)"]
+            ZV{{"validate()<br/>json / param / query"}}
+            R1["routes/forms.ts<br/>GET, POST, PUT (planned), DELETE"]
+            R2["routes/submissions.ts"]
+            R3["routes/files.ts"]
+            R4["routes/sync.ts<br/>status, full sync,<br/>retry (planned)"]
+        end
+        subgraph Repo["Repository layer (lib/server/repo)"]
+            direction TB
+            FAC["forms.ts / submissions.ts<br/>facade"]
+            DUAL["dual.ts<br/>mirrorSafely, readWithFallback"]
+            PGR["postgres/*<br/>Prisma"]
+            FSR["firestore/*<br/>Admin SDK"]
+            FIL["files.ts<br/>chunked (planned)"]
+            OUT["outbox.ts<br/>recordFailure, processTasks (planned)"]
+            SYN["sync.ts"]
+        end
+        RH --> RL
+        RL --> AUTH
+        AUTH --> ZV
+        ZV --> R1
+        ZV --> R2
+        ZV --> R3
+        ZV --> R4
+        R1 --> FAC
+        R2 --> FAC
+        R2 --> FIL
+        R3 --> FIL
+        R4 --> SYN
+        R4 --> OUT
+        FAC --> DUAL
+        DUAL --> PGR
+        DUAL --> FSR
+        DUAL -- "mirror failed" --> OUT
+        OUT --> PGR
+        OUT --> FSR
+        SYN --> PGR
+        SYN --> FSR
+    end
+
+    LS[("Rate-limit store<br/>memory, then Redis (planned)")]
+    PG[("PostgreSQL<br/>Form, Question, Submission, Answer<br/>+ MirrorTask (planned)")]
+    FS[("Cloud Firestore<br/>forms, submissions, files (mirror)")]
+    SCH["External scheduler<br/>cron / GitHub Actions (planned)"]
+
+    BF -- "HTTP JSON" --> RH
+    UP -- "multipart POST /api/files" --> RH
+    SCH -- "Bearer SYNC_TOKEN" --> RH
+    RL --> LS
+    PGR --> PG
+    OUT --> PG
+    FSR --> FS
+    FIL --> FS
+
+    SH -. "imported by" .-> RHF
+    SH -. "imported by" .-> BF
+    SH -. "imported by" .-> ZV
+
+    classDef planned stroke-dasharray: 5 4,stroke:#b45309,fill:#fffbeb,color:#78350f;
+    class DEL,EDT,RL,AUTH,OUT,LS,SCH planned;

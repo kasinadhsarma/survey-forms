@@ -1,0 +1,24 @@
+flowchart TB
+    DONE["Built: core app<br/>forms, validation, submissions,<br/>files, Postgres + Firestore mirror,<br/>405 / 404 / 500 handling"]
+    E1["1. Login and form ownership"]
+    E2["2. Rate limiting"]
+    E3["3. Delete button<br/>+ delete a form's files"]
+    E4["4. Sync outbox<br/>+ scheduled call"]
+    E5["5. Form editing"]
+    E6["6. File limits<br/>chunks or bucket"]
+    END["Production-ready basic app"]
+
+    DONE --> E1
+    DONE --> E2
+    E1 --> E3
+    E2 --> E3
+    E3 --> E4
+    E3 --> E6
+    E4 --> E5
+    E5 --> END
+    E6 --> END
+
+    classDef built fill:#ecfdf5,stroke:#047857,color:#064e3b;
+    classDef planned stroke-dasharray: 5 4,stroke:#b45309,fill:#fffbeb,color:#78350f;
+    class DONE built;
+    class E1,E2,E3,E4,E5,E6 planned;

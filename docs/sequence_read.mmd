@@ -1,0 +1,33 @@
+sequenceDiagram
+    autonumber
+    participant P as Page
+    participant A as Hono API
+    participant R as readWithFallback
+    participant PG as PostgreSQL
+    participant FS as Firestore
+    participant O as Operator
+
+    P->>A: GET /api/forms/:id
+    A->>R: getForm(id)
+    R->>PG: primary read
+    alt Postgres answers (a row or null)
+        PG-->>R: form or null
+        R-->>A: result (null becomes 404)
+    else Postgres throws (unreachable)
+        PG--xR: error (logged)
+        R->>FS: fallback read forms/{id}
+        FS-->>R: form or null
+        R-->>A: result
+    end
+    A-->>P: 200 form, or 404
+
+    Note over O,FS: Repair after an outage or a restore
+    O->>A: GET /api/sync/status (Bearer token)
+    A->>PG: form ids and submission count
+    A->>FS: form ids and submission counts
+    A-->>O: missingInFirestore, onlyInFirestore, inSync
+    O->>A: POST /api/sync (Bearer token)
+    A->>PG: read all forms and submissions
+    A->>FS: replace documents, set real counters
+    A->>FS: delete forms that no longer exist in Postgres
+    A-->>O: forms, submissions, removed

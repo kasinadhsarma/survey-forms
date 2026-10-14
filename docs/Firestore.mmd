@@ -1,0 +1,12 @@
+flowchart TB
+    subgraph FS["Cloud Firestore (default) database"]
+        direction TB
+        F["forms / {formId}<br/>title, description, createdAt,<br/>questions[ ] embedded,<br/>responseCount"]
+        S["forms / {formId} / submissions / {submissionId}<br/>createdAt, answers { questionId: value }"]
+        FI["files / {fileId}<br/>name, type,<br/>data (base64, max 700 KB)"]
+    end
+    F -- "subcollection" --> S
+    S -. "file answer holds the fileId" .-> FI
+    PG[("PostgreSQL<br/>source of truth")]
+    PG -- "same ids, one-way mirror" --> F
+    PG -- "same ids, one-way mirror" --> S

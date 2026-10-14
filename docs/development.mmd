@@ -1,0 +1,41 @@
+flowchart TB
+    subgraph Setup["1. Set up (once)"]
+        direction LR
+        S1["create-next-app<br/>--no-src-dir, Tailwind v4"]
+        S2["npm install<br/>packages pinned"]
+        S3[".env + .env.example<br/>Postgres URL, Firebase key,<br/>SYNC_TOKEN"]
+        S4["prisma migrate dev<br/>prisma generate"]
+        S1 --> S2 --> S3 --> S4
+    end
+
+    subgraph Build["2. Build in layers"]
+        direction LR
+        B1["lib/schemas<br/>one file per concern"]
+        B2["lib/server<br/>env, db, firestore,<br/>errors, methods, validate"]
+        B3["lib/server/repo<br/>postgres, firestore,<br/>dual, facade, files, sync"]
+        B4["lib/server/routes + app.ts<br/>+ app/api route"]
+        B5["lib/fetch.ts + patterns<br/>+ components + pages"]
+        B1 --> B2 --> B3 --> B4 --> B5
+    end
+
+    subgraph Check["3. Check after every layer"]
+        direction LR
+        C1["prettier --check"]
+        C2["tsc --noEmit"]
+        C3["eslint ."]
+        C4["npm run build"]
+        C5["curl API checks<br/>405, 404, 400, 201<br/>(a failure sends you back<br/>to the layer that caused it)"]
+        C1 --> C2 --> C3 --> C4 --> C5
+    end
+
+    subgraph Run["4. Run and try it"]
+        direction LR
+        R1["npm run dev"]
+        R2["create form, open link,<br/>submit, read responses"]
+        R3["sync status<br/>both databases equal"]
+        R1 --> R2 --> R3
+    end
+
+    Setup --> Build
+    Build --> Check
+    Check -- "all pass" --> Run
