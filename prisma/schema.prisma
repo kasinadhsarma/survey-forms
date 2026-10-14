@@ -11,3 +11,19 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+// Why : the parent record .It owns the questions and the submissions.
+model Form{
+  id      String  @id @default(cuid())
+  title  String
+  description String?
+  published Boolean @default(true)
+  createdAt DateTime @default(now())
+  questions Questions[]
+  submissions Submissions[]
+}
+
+
+// Question: One survey created by an author . It holds the title and 
+// Description and is the parent of its questions and it's submissions
+// Deleting a form cascades 
