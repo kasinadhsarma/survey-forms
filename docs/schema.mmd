@@ -1,24 +1,23 @@
 erDiagram
-    Form ||--|{ Question : "has"
-    Form ||--o{ Submission : "receives"
-    Submission ||--|{ Answer : "contains"
-    Question ||--o{ Answer : "answered by"
+    Form ||--o{ Question : "has (cascade delete)"
+    Form ||--o{ Submission : "receives (cascade delete)"
+    Submission ||--o{ Answer : "contains (cascade delete)"
+    Question ||--o{ Answer : "is answered by (cascade delete)"
 
     Form {
         string id PK "cuid"
         string title
-        string description "nullable"
-        boolean published "default true"
+        string description "optional"
         datetime createdAt
     }
     Question {
         string id PK "cuid"
         string formId FK
         string label
-        string type "short_text, long_text, number, email, single_choice, multi_choice, date, file"
-        boolean required "default false"
-        string_array options "choice types only"
-        int order
+        string type "short_text, long_text, number, email, date, single_choice, multi_choice, file"
+        boolean required
+        string_array options "choices for choice types"
+        int position "order inside the form"
     }
     Submission {
         string id PK "cuid"
@@ -29,5 +28,6 @@ erDiagram
         string id PK "cuid"
         string submissionId FK
         string questionId FK
-        json value "string, number, string[] or S3 key"
+        string text "optional: text, JSON list, or file id"
+        float number "optional: number answers only"
     }

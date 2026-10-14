@@ -2,36 +2,55 @@ sequenceDiagram
     autonumber
     actor U as Respondent
     participant P as Survey page
-    participant F as better-fetch
     participant A as Hono API
-    participant D as PostgreSQL
-    participant S as S3 bucket
+    participant PG as PostgreSQL
+    participant FS as Firestore
+    actor O as Operator
 
-    U->>P: Open /f/formId
-    P->>F: GET /forms/:id
-    F->>A: request
-    A->>D: load form + questions
-    D-->>A: rows
-    A-->>P: form (validated response)
-    P->>P: buildAnswerSchema(questions)
-
+    Note over U,FS: 1. Submit a response (with an optional file)
     opt File question
-        P->>A: POST /uploads/presign (name, type, size)
-        A-->>P: presigned URL + key
-        P->>S: PUT file directly
-        S-->>P: 200 OK
+        P->>A: POST /api/files (multipart file)
+        A->>A: re-check type and size (max 700 KB)
+        A->>FS: files/{fileId} = name, type, base64
+        A-->>P: 201 { id }
     end
-
     U->>P: Submit answers
     P->>P: zodResolver validates (client)
-    P->>F: POST /forms/:id/submissions
-    F->>A: request
-    A->>D: load questions
-    A->>A: buildAnswerSchema + validate (server)
-    alt Invalid
-        A-->>P: 400 VALIDATION_ERROR + issues
+    P->>A: POST /api/forms/:id/submissions
+    A->>PG: load form + questions
+    A->>A: buildAnswerSchema(questions) validates body
+    alt Invalid answers
+        A-->>P: 400 invalid_answers + issues
+    else Unknown file id
+        A->>FS: file exists?
+        A-->>P: 400 Unknown file
     else Valid
-        A->>D: transaction: Submission + Answers
-        D-->>A: ok
-        A-->>P: 201 Created
+        A->>PG: nested create: Submission + Answers (one transaction)
+        PG-->>A: saved row
+        A->>FS: transaction: set submission, responseCount +1 only if new
+        Note over A,FS: a Firestore failure is logged, not returned
+        A-->>P: 201 { id }
     end
+
+    Note over U,FS: 2. Read with fallback
+    P->>A: GET /api/forms/:id
+    A->>PG: primary read
+    alt Postgres answers (a row or null)
+        PG-->>A: form or null (null becomes 404)
+    else Postgres throws (unreachable)
+        PG--xA: error (logged)
+        A->>FS: fallback read forms/{id}
+        FS-->>A: form or null
+    end
+    A-->>P: 200 form, or 404
+
+    Note over O,FS: 3. Repair after an outage or a restore
+    O->>A: GET /api/sync/status (Bearer token)
+    A->>PG: form ids and submission count
+    A->>FS: form ids and submission counts
+    A-->>O: missingInFirestore, onlyInFirestore, inSync
+    O->>A: POST /api/sync (Bearer token)
+    A->>PG: read all forms and submissions
+    A->>FS: replace documents, set real counters
+    A->>FS: delete forms that no longer exist in Postgres
+    A-->>O: forms, submissions, removed

@@ -11,6 +11,7 @@
 \usepackage{textcomp}
 \usepackage{graphicx}
 \usepackage{float}
+\usepackage{pdflscape}
 \graphicspath{{/home/claude/diagrams-v2/}}
 \usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
 
@@ -687,12 +688,27 @@ Firestore is the mirror and the file store. Figure~\ref{fig:firestore} shows its
 % ------------------------------------------------------------
 Figure~\ref{fig:arch} shows the layers. The shared Zod schemas are imported by the form, the HTTP client and the API validator. Routes never touch a database directly: they call the repository layer, which writes to PostgreSQL first and mirrors to Firestore, and reads from PostgreSQL with Firestore as the fallback. Files bypass PostgreSQL and live only in Firestore.
 
+\begin{landscape}
 \begin{figure}[H]
   \centering
-  \includegraphics[width=0.78\linewidth,height=0.82\textheight,keepaspectratio]{architecture.pdf}
-  \caption{Architecture of the application.}
+  \includegraphics[width=0.98\linewidth,height=0.86\textheight,keepaspectratio]{architecture.pdf}
+  \caption{Architecture of the application as built.}
   \label{fig:arch}
 \end{figure}
+\end{landscape}
+
+\clearpage
+\subsection{Architecture with the planned extensions}
+Figure~\ref{fig:archplanned} shows the same system with the extensions from Section~\ref{sec:extensions}. Dashed amber boxes are planned and not built; solid boxes exist today. The rate-limit and auth middleware sit in front of validation, a failed mirror write goes to an outbox table that the sync routes retry, an external scheduler calls the token-protected sync routes, and the delete and edit screens reuse the same typed client.
+
+\begin{landscape}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\linewidth,height=0.86\textheight,keepaspectratio]{architecture_planned.pdf}
+  \caption{Architecture with the planned extensions (dashed = planned).}
+  \label{fig:archplanned}
+\end{figure}
+\end{landscape}
 
 \clearpage
 % ------------------------------------------------------------
@@ -717,6 +733,34 @@ Figure~\ref{fig:seqread} shows a read that falls back to Firestore when PostgreS
   \includegraphics[width=0.92\linewidth,height=0.68\textheight,keepaspectratio]{sequence_read.pdf}
   \caption{Read fallback and the sync endpoints.}
   \label{fig:seqread}
+\end{figure}
+
+
+\clearpage
+% ------------------------------------------------------------
+\section{Development Workflow (Mermaid Flowcharts)}\label{sec:development}
+% ------------------------------------------------------------
+\subsection{How the project is built and checked}
+Figure~\ref{fig:dev} shows the order of work in Steps 1 to 13. The project is built layer by layer, from the schemas up to the pages, and the same four commands run after every layer so an error is found where it was made. A failing check sends the work back to the layer that caused it.
+
+\begin{landscape}
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.98\linewidth,height=0.86\textheight,keepaspectratio]{development.pdf}
+  \caption{Development workflow: set up, build in layers, check, run.}
+  \label{fig:dev}
+\end{figure}
+\end{landscape}
+
+\clearpage
+\subsection{Roadmap for the planned extensions}
+Figure~\ref{fig:roadmap} shows which extension depends on which, and matches the suggested order in Section~\ref{sec:extensions}. Login and rate limiting come first because the delete button and form editing should not ship while anyone can call those routes.
+
+\begin{figure}[H]
+  \centering
+  \includegraphics[width=0.7\linewidth,height=0.6\textheight,keepaspectratio]{roadmap.pdf}
+  \caption{Roadmap: built core and the planned extensions (dashed = planned).}
+  \label{fig:roadmap}
 \end{figure}
 
 \newpage
@@ -2914,6 +2958,15 @@ The diagrams above were rendered from these Mermaid sources. They can be pasted 
 
 \subsection*{Architecture (\texttt{architecture.mmd})}
 \lstinputlisting{/home/claude/diagrams-v2/architecture.mmd}
+
+\subsection*{Architecture with planned extensions (\texttt{architecture\_planned.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/architecture_planned.mmd}
+
+\subsection*{Development workflow (\texttt{development.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/development.mmd}
+
+\subsection*{Extension roadmap (\texttt{roadmap.mmd})}
+\lstinputlisting{/home/claude/diagrams-v2/roadmap.mmd}
 
 \subsection*{Submission sequence (\texttt{sequence\_write.mmd})}
 \lstinputlisting{/home/claude/diagrams-v2/sequence_write.mmd}
