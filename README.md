@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Survey Forms
 
-## Getting Started
+A Google Forms clone: build a survey, share a public link, collect validated
+responses and view them in a table.
 
-First, run the development server:
+## Stack
+
+- Next.js 16 (App Router, Cache Components), Tailwind CSS v4
+- react-hook-form + Zod, with `@better-fetch/fetch` as the typed client
+- Hono API inside a Next.js route handler, validated with Zod
+- Prisma 7 + PostgreSQL for forms, questions and answers
+- Cloud Firestore as a live mirror of the data (reads fall back to it if
+  Postgres is down) and as the store for uploaded files
+
+The Zod schemas in `shared/schemas/` are imported by both the browser and the
+API, so the same rules run in the form, in the API and before saving.
+
+## Setup
 
 ```bash
+npm install
+cp .env.example .env      # then fill in the values
+npx prisma migrate dev    # create the tables
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+| Variable                                                               | Purpose                                                                                             |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                         | PostgreSQL connection string                                                                        |
+| `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` | Firebase service account (Project settings, Service accounts). Write the key with `\n` for newlines |
+| `SYNC_TOKEN`                                                           | Bearer token for the sync endpoints                                                                 |
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Create a Cloud Firestore database in the Firebase console first.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## API
 
-## Learn More
+| Method      | Path                         |                                        |
+| ----------- | ---------------------------- | -------------------------------------- |
+| GET, POST   | `/api/forms`                 | list, create                           |
+| GET, DELETE | `/api/forms/:id`             | read, delete                           |
+| GET, POST   | `/api/forms/:id/submissions` | list a page, submit                    |
+| POST        | `/api/files`                 | upload a file (max 700 KB)             |
+| GET         | `/api/files/:id`             | download a file                        |
+| GET         | `/api/sync/status`           | compare Postgres and Firestore (token) |
+| POST        | `/api/sync`                  | copy Postgres to Firestore (token)     |
 
-To learn more about Next.js, take a look at the following resources:
+Every other method returns a JSON 405, and errors have the shape
+`{ error: { code, message } }`.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Checks
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npx prettier --check . && npx tsc --noEmit && npx eslint . && npm run build
+```
 
-## Deploy on Vercel
+## Known limits
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- There is no login: anyone with a form link can answer it, and the forms
+  list and responses pages are public.
+- Uploaded files live in Firestore documents, so each is limited to 700 KB.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## License
+
+[MIT](LICENSE) (c) 2026 Kasinadh Sarma
