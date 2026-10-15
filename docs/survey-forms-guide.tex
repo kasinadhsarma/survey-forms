@@ -57,7 +57,7 @@
 % ------------------------------------------------------------
 This guide explains, in order, how to create the project, which files are created or changed at each step, and how the layers connect. The application lets a user build a survey, share a public link, collect validated responses, and view the submissions.
 
-\textbf{Stack.} Next.js (App Router), Tailwind CSS v4, react-hook-form, Zod, \path{@better-fetch/fetch}, Hono (inside a Next.js route handler), Prisma 7 with PostgreSQL as the primary database, and Cloud Firestore (through the Firebase Admin SDK) as a live mirror of that data and as the store for uploaded files.
+\textbf{Stack.} Next.js (App Router), Tailwind CSS v4, react-hook-form, Zod, \path{@better-fetch/fetch}, Hono (inside a Next.js route handler), Cloud Firestore (through the Firebase Admin SDK) as the primary database and the store for uploaded files, and Prisma 7 with PostgreSQL as a local-development-only copy.
 
 \textbf{Project layout.} The project uses the root \path{app/} layout (no \path{src/} folder). Section~\ref{sec:verified} says exactly what was checked and what was not.
 
@@ -66,7 +66,7 @@ This guide explains, in order, how to create the project, which files are create
 \paragraph{Decisions in this version.}
 \begin{itemize}
   \item \textbf{Hono, not Elysia.} Hono runs inside a Next.js route handler, giving one project and one deployment.
-  \item \textbf{Postgres is the source of truth; Firestore mirrors it.} Every write goes to Postgres through Prisma first and is then copied to Firestore under the same ids. If Postgres is unreachable, reads fall back to Firestore. Section~\ref{sec:integration} explains the design and its limits.
+  \item \textbf{Firestore is the source of truth; Postgres is a local-only copy.} Every write goes to Firestore first. Only when \texttt{NODE_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set is it also copied to Postgres through Prisma under the same ids. If Firestore fails locally, reads fall back to Postgres; in production they fail. Section~\ref{sec:integration} explains the design and its limits.
   \item \textbf{Files live in Firestore, not in a storage bucket.} A new Firebase bucket may need a paid plan, so uploaded files are stored as documents in a Firestore collection. This caps a file at 700~KB (Firestore documents are limited to 1~MiB). Moving to a real bucket later changes only \path{lib/server/repo/files.ts} and the two file routes.
 \end{itemize}
 
@@ -81,8 +81,8 @@ This guide explains, in order, how to create the project, which files are create
 \midrule
 Node.js & 22 or newer (24.18 used here) & Runtime\\
 npm & 10 or newer (11.16 used here) & Package manager\\
-PostgreSQL & Local, Docker, Neon or Supabase & Primary database used by Prisma\\
-Firebase project & Cloud Firestore enabled, Admin SDK service account & Mirror database and file store\\
+PostgreSQL (optional) & Local or Docker & Local development copy used by Prisma; not used in production\\
+Firebase project & Cloud Firestore enabled, Admin SDK service account & Primary database and file store\\
 Git & Any recent version & Version control\\
 \bottomrule
 \end{tabular}
@@ -162,26 +162,26 @@ Each package is here for one job, and the list is kept short on purpose.
 \path{lib/fetch.ts} & Typed client; every endpoint has input, output, params and query schemas.\\
 \path{lib/server/routes/} & Hono routes. Validate again on the server; return one error shape.\\
 \path{lib/server/repo/forms.ts}, \path{submissions.ts} & The only entry points the routes use. They combine the two databases.\\
-\path{lib/server/repo/postgres/} & Prisma code: the source of truth.\\
-\path{lib/server/repo/firestore/} & Firestore code: the mirror and the read fallback.\\
+\path{lib/server/repo/postgres/} & Prisma code: the local development copy.\\
+\path{lib/server/repo/firestore/} & Firestore code: the primary store.\\
 \path{lib/server/repo/files.ts} & Uploaded files, stored in Firestore.\\
-\path{lib/server/repo/sync.ts} & Compares and repairs the two databases.\\
+\path{lib/server/repo/sync.ts} & Compares Firestore with the local Postgres copy and refreshes it.\\
 \bottomrule
 \end{tabular}
 \end{center}
 
-\paragraph{Writes.} \texttt{createForm}, \texttt{deleteForm} and \texttt{createSubmission} run in Postgres first. Only after Postgres has committed does the same row go to Firestore, under the same id. A failure of the Firestore write is logged and does not fail the request, because the response is already correct; the sync endpoint repairs the difference.
+\paragraph{Writes.} \texttt{createForm}, \texttt{deleteForm} and \texttt{createSubmission} run in Firestore first, with ids generated on the server. Only when local Postgres is enabled (\texttt{NODE_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set) does the same data go to Postgres, under the same ids. A failure of the Postgres write is logged and does not fail the request. Deleting a form removes its Firestore submissions as well.
 
-\paragraph{Reads.} Reads come from Postgres. If Postgres throws (for example it is unreachable), the same read runs against Firestore. A ``not found'' from Postgres is a real answer and is not retried.
+\paragraph{Reads.} Reads come from Firestore. If Firestore throws and local Postgres is enabled, the same read runs against Postgres; in production the error is returned. A ``not found'' from Firestore is a real answer and is not retried. Timestamps stored by hand in the Firebase console are converted to ISO strings when read.
 
 \paragraph{Firestore layout.} A form is one document in \texttt{forms/\{id\}} with its questions embedded and a \texttt{responseCount}. Each submission is a document in the subcollection \texttt{forms/\{id\}/submissions/\{id\}}. Uploaded files are documents in \texttt{files/\{id\}}.
 
-\paragraph{Counter.} When a submission is mirrored, a transaction writes the document and increments \texttt{responseCount} only if the document did not exist, so mirroring the same submission twice counts once.
+\paragraph{Counter.} When a submission is written, a transaction writes the document and increments \texttt{responseCount} only if the document did not exist, so writing the same submission twice counts once.
 
 \paragraph{Limits of this design.}
 \begin{itemize}
-  \item Sync is one-way, from Postgres to Firestore. Edits made directly in Firestore are overwritten by the next sync.
-  \item When Postgres is down, reads work but new forms and submissions fail.
+  \item Sync is one-way, from Firestore to local Postgres. Edits made directly in local Postgres are overwritten by the next sync.
+  \item Postgres is never required: if it is down locally, requests still succeed through Firestore.
   \item Syncing is manual (an endpoint you call); there is no scheduler.
 \end{itemize}
 
@@ -244,12 +244,12 @@ serviceAccount*.json
 npx prisma migrate dev --name init
 npx prisma generate
 \end{lstlisting}
-Application code imports the client as \texttt{@/generated/prisma/client}. Do not drop or reset the database schema on a machine that holds real forms; a reset deletes them, and the Firestore mirror is only repopulated from Postgres, not the other way round.
+Application code imports the client as \texttt{@/generated/prisma/client}. Do not drop or reset the database schema on a machine that holds real forms; a reset deletes them, but Firestore is the source of truth, so \texttt{POST /api/sync} restores the local copy.
 
 \subsection*{Step 5: Server foundations}
 \begin{itemize}
   \item \path{lib/server/env.ts}: validates the environment with Zod. Two lazy getters keep the database variables apart from the Firebase ones, so forms keep working when Firebase is not configured.
-  \item \path{lib/server/db.ts}: one shared Prisma client with the Postgres adapter, kept on \texttt{globalThis} so hot reloading does not open new pools.
+  \item \path{lib/server/db.ts}: one lazily created Prisma client (\texttt{getPrisma}) with the Postgres adapter, so production without \texttt{DATABASE\_URL} never creates it, kept on \texttt{globalThis} so hot reloading does not open new pools.
   \item \path{lib/server/firestore.ts}: starts the Firebase Admin app once (reused if it exists) and returns the Firestore database.
   \item \path{lib/server/errors.ts}: one error body shape, \texttt{\{ error: \{ code, message \} \}}.
   \item \path{lib/server/methods.ts}: \texttt{methodNotAllowed}, the 405 and \texttt{Allow} helper used by every route file.
@@ -268,10 +268,10 @@ Application code imports the client as \texttt{@/generated/prisma/client}. Do no
 
 \subsection*{Step 7: Build the repository layer}
 \begin{itemize}
-  \item \path{lib/server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores each answer as JSON in the \texttt{value} column, and returns what it stored so the same row can be mirrored.
-  \item \path{lib/server/repo/firestore/forms.ts} and \path{submissions.ts}: mirror writes, mirror reads and the counter transaction described in Section~\ref{sec:integration}.
-  \item \path{lib/server/repo/dual.ts}: \texttt{mirrorSafely} (log, do not fail) and \texttt{readWithFallback}.
-  \item \path{lib/server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Postgres first, then mirror; Postgres read first, then fallback.
+  \item \path{lib/server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls, used only locally. Forms are parsed with \texttt{formSchema} (the \texttt{order} column is mapped to \texttt{position}). \texttt{mirrorForm} and \texttt{mirrorSubmission} copy Firestore data in under the same ids and are safe to repeat; each answer is stored as JSON in the \texttt{value} column.
+  \item \path{lib/server/repo/firestore/forms.ts} and \path{submissions.ts}: the primary writes and reads (ids are generated here), recursive delete, and the counter transaction described in Section~\ref{sec:integration}.
+  \item \path{lib/server/repo/dual.ts}: \texttt{mirrorSafely} (skipped outside local development; log, do not fail) and \texttt{readWithFallback}.
+  \item \path{lib/server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Firestore first, then the local Postgres copy; Firestore read first, then the local fallback.
   \item \path{lib/server/repo/files.ts}: save, load and existence-check for uploaded files.
   \item \path{lib/server/repo/sync.ts}: \texttt{getSyncStatus} and \texttt{syncAll}.
 \end{itemize}
@@ -357,7 +357,7 @@ Then test by hand: create a form with one question of each type, open its public
 curl -H "Authorization: Bearer $SYNC_TOKEN" localhost:3000/api/sync/status
 curl -X POST -H "Authorization: Bearer $SYNC_TOKEN" localhost:3000/api/sync
 \end{lstlisting}
-\texttt{status} lists form ids missing from Firestore, ids that exist only in Firestore, and both submission counts; \texttt{inSync} is true only when all of these match. Comparing ids matters: counts alone say ``in sync'' when one form was deleted and another added. \texttt{POST /api/sync} copies every form and submission from Postgres (documents are replaced, so repeating it is safe), sets each form's counter to the real number, and removes Firestore forms that no longer exist in Postgres. Run it after any Firestore outage, after restoring Postgres from a backup, or when the server log shows ``Firestore mirror failed''.
+\texttt{status} lists form ids missing from Postgres, ids that exist only in Postgres, and both submission counts; \texttt{inSync} is true only when all of these match. Comparing ids matters: counts alone say ``in sync'' when one form was deleted and another added. \texttt{POST /api/sync} copies every form and submission from Firestore into local Postgres (rows are upserted, so repeating it is safe) and removes Postgres forms that no longer exist in Firestore. Both endpoints return an error when local Postgres is disabled. Run it after resetting your local database or when the server log shows ``Local Postgres mirror failed''.
 
 % ------------------------------------------------------------
 \section{What Was Verified}\label{sec:verified}
@@ -661,7 +661,7 @@ Figure~\ref{fig:schema} shows the four PostgreSQL models from Step~4 and how the
 \begin{figure}[H]
   \centering
   \includegraphics[width=0.95\linewidth,height=0.42\textheight,keepaspectratio]{schema.pdf}
-  \caption{Entity-relationship diagram of the PostgreSQL database (source of truth).}
+  \caption{Entity-relationship diagram of the local PostgreSQL copy.}
   \label{fig:schema}
 \end{figure}
 
@@ -673,7 +673,7 @@ Figure~\ref{fig:schema} shows the four PostgreSQL models from Step~4 and how the
 \end{itemize}
 
 \subsection{Firestore layout}
-Firestore is the mirror and the file store. Figure~\ref{fig:firestore} shows its collections. Every document uses the same id as its Postgres row, which is what lets the sync endpoint compare and repair the two databases by id.
+Firestore is the primary store and the file store. Figure~\ref{fig:firestore} shows its collections. Every local Postgres row uses the same id as its Firestore document, which is what lets the sync endpoint compare the two by id.
 
 \begin{figure}[H]
   \centering
@@ -686,7 +686,7 @@ Firestore is the mirror and the file store. Figure~\ref{fig:firestore} shows its
 % ------------------------------------------------------------
 \section{System Architecture (Mermaid Flowchart)}\label{sec:architecture}
 % ------------------------------------------------------------
-Figure~\ref{fig:arch} shows the layers. The shared Zod schemas are imported by the form, the HTTP client and the API validator. Routes never touch a database directly: they call the repository layer, which writes to PostgreSQL first and mirrors to Firestore, and reads from PostgreSQL with Firestore as the fallback. Files bypass PostgreSQL and live only in Firestore.
+Figure~\ref{fig:arch} shows the layers. The shared Zod schemas are imported by the form, the HTTP client and the API validator. Routes never touch a database directly: they call the repository layer, which writes to Firestore first and, in local development only, copies to PostgreSQL, and reads from Firestore with local PostgreSQL as the fallback. Files bypass PostgreSQL and live only in Firestore.
 
 \begin{landscape}
 \begin{figure}[H]

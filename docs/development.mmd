@@ -3,7 +3,7 @@ flowchart TB
         direction LR
         S1["create-next-app<br/>--no-src-dir, Tailwind v4"]
         S2["npm install<br/>packages pinned"]
-        S3[".env + .env.example<br/>Postgres URL, Firebase key,<br/>SYNC_TOKEN"]
+        S3[".env + .env.example<br/>Firebase key, optional local Postgres URL,<br/>SYNC_TOKEN"]
         S4["prisma migrate dev<br/>prisma generate"]
         S1 --> S2 --> S3 --> S4
     end

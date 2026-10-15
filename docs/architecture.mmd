@@ -29,9 +29,9 @@ flowchart LR
         subgraph Repo["Repository layer (lib/server/repo)"]
             direction TB
             FAC["forms.ts / submissions.ts<br/>facade"]
-            DUAL["dual.ts<br/>mirrorSafely, readWithFallback"]
-            PGR["postgres/*<br/>Prisma"]
-            FSR["firestore/*<br/>Admin SDK"]
+            DUAL["dual.ts<br/>mirrorSafely (dev only), readWithFallback"]
+            PGR["postgres/*<br/>Prisma (local dev copy)"]
+            FSR["firestore/*<br/>Admin SDK (primary)"]
             FIL["files.ts<br/>chunked (planned)"]
             OUT["outbox.ts<br/>recordFailure, processTasks (planned)"]
             SYN["sync.ts"]
@@ -50,8 +50,8 @@ flowchart LR
         R4 --> SYN
         R4 --> OUT
         FAC --> DUAL
-        DUAL --> PGR
         DUAL --> FSR
+        DUAL -- "dev only" --> PGR
         DUAL -- "mirror failed" --> OUT
         OUT --> PGR
         OUT --> FSR
@@ -60,8 +60,8 @@ flowchart LR
     end
 
     LS[("Rate-limit store<br/>memory, then Redis (planned)")]
-    PG[("PostgreSQL<br/>Form, Question, Submission, Answer<br/>+ MirrorTask (planned)")]
-    FS[("Cloud Firestore<br/>forms, submissions, files (mirror)")]
+    PG[("PostgreSQL (local dev only)<br/>Form, Question, Submission, Answer<br/>+ MirrorTask (planned)")]
+    FS[("Cloud Firestore (primary)<br/>forms, submissions, files")]
     SCH["External scheduler<br/>cron / GitHub Actions (planned)"]
 
     BF -- "HTTP JSON" --> RH

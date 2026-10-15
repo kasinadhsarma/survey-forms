@@ -3,31 +3,34 @@ sequenceDiagram
     participant P as Page
     participant A as Hono API
     participant R as readWithFallback
-    participant PG as PostgreSQL
     participant FS as Firestore
-    participant O as Operator
+    participant PG as Local PostgreSQL (dev only)
+    participant O as Developer
 
     P->>A: GET /api/forms/:id
     A->>R: getForm(id)
-    R->>PG: primary read
-    alt Postgres answers (a row or null)
-        PG-->>R: form or null
-        R-->>A: result (null becomes 404)
-    else Postgres throws (unreachable)
-        PG--xR: error (logged)
-        R->>FS: fallback read forms/{id}
+    R->>FS: primary read
+    alt Firestore answers (a form or null)
         FS-->>R: form or null
+        R-->>A: result (null becomes 404)
+    else Firestore throws and local Postgres is enabled
+        FS--xR: error (logged)
+        R->>PG: fallback read
+        PG-->>R: form or null
         R-->>A: result
+    else Firestore throws in production
+        FS--xR: error
+        R-->>A: error (500)
     end
     A-->>P: 200 form, or 404
 
-    Note over O,FS: Repair after an outage or a restore
+    Note over O,PG: Refresh the local copy (local only)
     O->>A: GET /api/sync/status (Bearer token)
-    A->>PG: form ids and submission count
     A->>FS: form ids and submission counts
-    A-->>O: missingInFirestore, onlyInFirestore, inSync
+    A->>PG: form ids and submission count
+    A-->>O: missingInPostgres, onlyInPostgres, inSync
     O->>A: POST /api/sync (Bearer token)
-    A->>PG: read all forms and submissions
-    A->>FS: replace documents, set real counters
-    A->>FS: delete forms that no longer exist in Postgres
+    A->>FS: read all forms and submissions
+    A->>PG: upsert forms, questions and submissions
+    A->>PG: delete forms that no longer exist in Firestore
     A-->>O: forms, submissions, removed

@@ -3,8 +3,8 @@ sequenceDiagram
     actor U as Respondent
     participant P as Survey page
     participant A as Hono API
-    participant PG as PostgreSQL
     participant FS as Firestore
+    participant PG as Local PostgreSQL (dev only)
 
     opt File question
         P->>A: POST /api/files (multipart file)
@@ -16,7 +16,7 @@ sequenceDiagram
     U->>P: Submit answers
     P->>P: zodResolver validates (client)
     P->>A: POST /api/forms/:id/submissions
-    A->>PG: load form + questions
+    A->>FS: load form + questions
     A->>A: buildAnswerSchema(questions) validates body
     alt Invalid
         A-->>P: 400 invalid_answers + issues
@@ -24,9 +24,11 @@ sequenceDiagram
         A->>FS: file exists?
         A-->>P: 400 Unknown file
     else Valid
-        A->>PG: nested create: Submission + Answers (one transaction)
-        PG-->>A: saved row
         A->>FS: transaction: set submission, responseCount +1 only if new
-        Note over A,FS: a Firestore failure is logged, not returned
+        FS-->>A: saved
+        opt NODE_ENV is not production and DATABASE_URL is set
+            A->>PG: copy submission + answers (same ids)
+            Note over A,PG: a Postgres failure is logged, not returned
+        end
         A-->>P: 201 { id }
     end
