@@ -12,7 +12,7 @@
 \usepackage{graphicx}
 \usepackage{float}
 \usepackage{pdflscape}
-\graphicspath{{/home/claude/diagrams-v2/}}
+\graphicspath{{diagrams/}}
 \usepackage[colorlinks=true,linkcolor=blue!50!black,urlcolor=blue!50!black]{hyperref}
 
 \definecolor{codebg}{RGB}{245,245,247}
@@ -66,7 +66,7 @@ This guide explains, in order, how to create the project, which files are create
 \paragraph{Decisions in this version.}
 \begin{itemize}
   \item \textbf{Hono, not Elysia.} Hono runs inside a Next.js route handler, giving one project and one deployment.
-  \item \textbf{Firestore is the source of truth; Postgres is a local-only copy.} Every write goes to Firestore first. Only when \texttt{NODE_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set is it also copied to Postgres through Prisma under the same ids. If Firestore fails locally, reads fall back to Postgres; in production they fail. Section~\ref{sec:integration} explains the design and its limits.
+  \item \textbf{Firestore is the source of truth; Postgres is a local-only copy.} Every write goes to Firestore first. Only when \texttt{NODE\_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set is it also copied to Postgres through Prisma under the same ids. If Firestore fails locally, reads fall back to Postgres; in production they fail. Section~\ref{sec:integration} explains the design and its limits.
   \item \textbf{Files live in Firestore, not in a storage bucket.} A new Firebase bucket may need a paid plan, so uploaded files are stored as documents in a Firestore collection. This caps a file at 700~KB (Firestore documents are limited to 1~MiB). Moving to a real bucket later changes only \path{lib/server/repo/files.ts} and the two file routes.
 \end{itemize}
 
@@ -170,7 +170,7 @@ Each package is here for one job, and the list is kept short on purpose.
 \end{tabular}
 \end{center}
 
-\paragraph{Writes.} \texttt{createForm}, \texttt{deleteForm} and \texttt{createSubmission} run in Firestore first, with ids generated on the server. Only when local Postgres is enabled (\texttt{NODE_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set) does the same data go to Postgres, under the same ids. A failure of the Postgres write is logged and does not fail the request. Deleting a form removes its Firestore submissions as well.
+\paragraph{Writes.} \texttt{createForm}, \texttt{deleteForm} and \texttt{createSubmission} run in Firestore first, with ids generated on the server. Only when local Postgres is enabled (\texttt{NODE\_ENV} is not \texttt{production} and \texttt{DATABASE\_URL} is set) does the same data go to Postgres, under the same ids. A failure of the Postgres write is logged and does not fail the request. Deleting a form removes its Firestore submissions as well.
 
 \paragraph{Reads.} Reads come from Firestore. If Firestore throws and local Postgres is enabled, the same read runs against Postgres; in production the error is returned. A ``not found'' from Firestore is a real answer and is not retried. Timestamps stored by hand in the Firebase console are converted to ISO strings when read.
 
@@ -3162,27 +3162,27 @@ export default function ResponsesPage(
 The diagrams above were rendered from these Mermaid sources. They can be pasted into the Mermaid Live Editor, a GitHub README, or any Mermaid-aware viewer.
 
 \subsection*{Database schema (\texttt{schema.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/schema.mmd}
+\lstinputlisting{schema.mmd}
 
 \subsection*{Firestore layout (\texttt{firestore.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/firestore.mmd}
+\lstinputlisting{Firestore.mmd}
 
 \subsection*{Architecture (\texttt{architecture.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/architecture.mmd}
+\lstinputlisting{architecture.mmd}
 
 \subsection*{Architecture with planned extensions (\texttt{architecture\_planned.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/architecture_planned.mmd}
+\lstinputlisting{Architectureplanned.mmd}
 
 \subsection*{Development workflow (\texttt{development.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/development.mmd}
+\lstinputlisting{development.mmd}
 
 \subsection*{Extension roadmap (\texttt{roadmap.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/roadmap.mmd}
+\lstinputlisting{roadmap.mmd}
 
 \subsection*{Submission sequence (\texttt{sequence\_write.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/sequence_write.mmd}
+\lstinputlisting{sequence_write.mmd}
 
 \subsection*{Read fallback and sync sequence (\texttt{sequence\_read.mmd})}
-\lstinputlisting{/home/claude/diagrams-v2/sequence_read.mmd}
+\lstinputlisting{sequence_read.mmd}
 
 \end{document}
