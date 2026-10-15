@@ -8,6 +8,7 @@ erDiagram
         string id PK "cuid"
         string title
         string description "optional"
+        boolean published "default true"
         datetime createdAt
     }
     Question {
@@ -17,7 +18,7 @@ erDiagram
         string type "short_text, long_text, number, email, date, single_choice, multi_choice, file"
         boolean required
         string_array options "choices for choice types"
-        int position "order inside the form"
+        int order "position inside the form"
     }
     Submission {
         string id PK "cuid"
@@ -28,6 +29,5 @@ erDiagram
         string id PK "cuid"
         string submissionId FK
         string questionId FK
-        string text "optional: text, JSON list, or file id"
-        float number "optional: number answers only"
+        json value "string, list of strings, or file id"
     }

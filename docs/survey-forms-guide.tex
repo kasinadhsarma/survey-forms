@@ -268,7 +268,7 @@ Application code imports the client as \texttt{@/generated/prisma/client}. Do no
 
 \subsection*{Step 7: Build the repository layer}
 \begin{itemize}
-  \item \path{lib/server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores numbers as numbers, and returns what it stored so the same row can be mirrored.
+  \item \path{lib/server/repo/postgres/forms.ts} and \path{submissions.ts}: all Prisma calls. Forms are parsed with \texttt{formSchema} so bad rows are caught on the server. \texttt{createSubmission} writes the submission and its answers in one nested create (a single transaction), skips empty answers, stores each answer as JSON in the \texttt{value} column, and returns what it stored so the same row can be mirrored.
   \item \path{lib/server/repo/firestore/forms.ts} and \path{submissions.ts}: mirror writes, mirror reads and the counter transaction described in Section~\ref{sec:integration}.
   \item \path{lib/server/repo/dual.ts}: \texttt{mirrorSafely} (log, do not fail) and \texttt{readWithFallback}.
   \item \path{lib/server/repo/forms.ts} and \path{submissions.ts}: the facade the routes import. Postgres first, then mirror; Postgres read first, then fallback.
@@ -456,7 +456,7 @@ Rate limiting & Any client can send unlimited requests & \path{lib/server/rateLi
 \toprule
 \textbf{Case} & \textbf{What happens}\\
 \midrule
-Has an \texttt{id} that belongs to this form & Updated in place: label, required, options and position may change.\\
+Has an \texttt{id} that belongs to this form & Updated in place: label, required, options and order may change.\\
 Has no \texttt{id} & Created as a new question.\\
 Has an \texttt{id} from another form & Rejected with a 400. Check the id against the form's own questions.\\
 Existing question missing from the payload & Deleted, and its answers cascade. If the form has responses, the screen must warn first, and the server must require \texttt{confirmRemoval: true} in the body, otherwise it answers 409.\\
@@ -473,7 +473,7 @@ Option removed that existing answers use & Allowed, but the old answers keep the
 \textbf{File} & \textbf{Action} & \textbf{Change}\\
 \midrule
 \path{lib/schemas/form.ts} & update & \texttt{updateFormSchema} and its type; \texttt{id} is optional on each input question\\
-\path{lib/server/repo/postgres/forms.ts} & update & \texttt{updateForm} inside one \texttt{prisma.\$transaction}: update the form, update or create each question, delete the removed ones, and renumber \texttt{position}\\
+\path{lib/server/repo/postgres/forms.ts} & update & \texttt{updateForm} inside one \texttt{prisma.\$transaction}: update the form, update or create each question, delete the removed ones, and renumber \texttt{order}\\
 \path{lib/server/repo/firestore/forms.ts} & reuse & \texttt{mirrorForm} already replaces the embedded question list; pass the stored response count so the counter is kept\\
 \path{lib/server/repo/forms.ts} & update & \texttt{updateForm}: Postgres first, then \texttt{mirrorSafely}\\
 \path{lib/server/routes/forms.ts} & update & \texttt{PUT /:id}, validated with the param and json validators; widen the 405 list\\
@@ -668,8 +668,8 @@ Figure~\ref{fig:schema} shows the four PostgreSQL models from Step~4 and how the
 \begin{itemize}
   \item \texttt{Question.type} is stored as text and restricted by the Zod enum at the API boundary.
   \item \texttt{Question.options} is a text array, used only by the two choice types.
-  \item \texttt{Answer} stores a number in \texttt{number} and everything else (text, a JSON list for multi-choice, or a file id) in \texttt{text}. Empty answers are not stored.
-  \item \texttt{Question.position} keeps the order of the questions inside a form.
+  \item \texttt{Answer.value} is a JSON column: it holds a string (text, a number as text, a choice or a file id) or a list of strings for multi-choice. Empty answers are not stored, and a submission can answer each question only once.
+  \item \texttt{Question.order} keeps the order of the questions inside a form.
 \end{itemize}
 
 \subsection{Firestore layout}
@@ -813,7 +813,7 @@ case 'email':
 \toprule
 \textbf{Place} & \textbf{Files} & \textbf{Why the steps are spelled out}\\
 \midrule
-Saving a submission & \texttt{createSubmission} in \path{lib/server/repo/postgres/submissions.ts} & Loops over the questions, skips empty answers, stores numbers as numbers and the rest as text, then writes once.\\
+Saving a submission & \texttt{createSubmission} in \path{lib/server/repo/postgres/submissions.ts} & Loops over the questions, skips empty answers, stores each answer as JSON (a string or a list), then writes once.\\
 Request handling & \path{lib/server/routes/submissions.ts} & Checks run in a fixed order with early returns: form exists, body is valid, answers are valid, every file id exists, then save. The order decides which error the client sees.\\
 Write then mirror & \path{lib/server/repo/forms.ts}, \path{submissions.ts}, \path{dual.ts} & Postgres must commit first, and only then is Firestore written. This order is the design.\\
 Failure handling & \texttt{mirrorSafely}, \texttt{readWithFallback} & \texttt{try} and \texttt{catch} control what happens when a database fails: log and continue, or retry on the other store.\\
@@ -836,12 +836,8 @@ for (const question of form.questions) {
   if (value === undefined || value === '' || value.length === 0) {
     continue; // empty answers are not stored
   }
-  if (question.type === 'number') {
-    rows.push({ questionId: question.id, text: null, number: Number(value) });
-  } else {
-    const text = Array.isArray(value) ? JSON.stringify(value) : value;
-    rows.push({ questionId: question.id, text, number: null });
-  }
+  // The Answer.value column is JSON, so strings and lists fit as-is.
+  rows.push({ questionId: question.id, value });
 }
 
 // Imperative: the order is the design (lib/server/repo/forms.ts)
@@ -871,7 +867,7 @@ return form;
 \texttt{answerSchemaFor} & \path{lib/schemas/submission.ts} & Turns one question into a Zod rule. The same question always gives an equivalent rule, and nothing is read or written.\\
 \texttt{buildAnswerSchema} & \path{lib/schemas/submission.ts} & Fills a new object from a list of questions and returns it. It changes only its own local object, never the questions.\\
 \texttt{errorBody} & \path{lib/server/errors.ts} & Builds the error object from its three arguments.\\
-\texttt{toAnswerMap} & \path{lib/server/repo/postgres/submissions.ts} & Builds a new answer map from a form and stored rows. Its loop changes only the local map.\\
+\texttt{toAnswerMap} & \path{lib/server/repo/postgres/submissions.ts} & Builds a new answer map from stored rows. Its loop changes only the local map.\\
 Row-to-response \texttt{map} calls & \texttt{listForms}, \texttt{listSubmissions}, \texttt{listAllSubmissions} (the \texttt{rows.map(...)} part) & Convert each row into a response object, for example a \texttt{Date} to an ISO string.\\
 Issue mapping & \texttt{validate} in \path{lib/server/validate.ts} and the submissions route & \texttt{issues.map(...)} turns validator issues into \texttt{\{ path, message \}} pairs.\\
 Schema checks & \texttt{schema.safeParse(...)} on a Zod schema & Decides valid or invalid from the value alone. The result is data (success or issues), not an exception.\\
@@ -993,6 +989,7 @@ model Form {
   id          String       @id @default(cuid())
   title       String
   description String?
+  published   Boolean      @default(true)
   createdAt   DateTime     @default(now())
   questions   Question[]
   submissions Submission[]
@@ -1008,8 +1005,10 @@ model Question {
   type     String
   required Boolean  @default(false)
   options  String[]
-  position Int
+  order    Int
   answers  Answer[]
+
+  @@index([formId, order])
 }
 
 // Why: groups answers so one response can be counted, paged and deleted
@@ -1020,18 +1019,21 @@ model Submission {
   form      Form     @relation(fields: [formId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
   answers   Answer[]
+
+  @@index([formId, createdAt])
 }
 
-// Why: joins a submission to a question. A number is stored in `number`,
-// everything else (including a file id) in `text`.
+// Why: joins a submission to a question. One JSON column holds a string,
+// a list of strings (multi-choice) or a file id.
 model Answer {
   id           String     @id @default(cuid())
   submissionId String
   submission   Submission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
   questionId   String
   question     Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
-  text         String?
-  number       Float?
+  value        Json
+
+  @@unique([submissionId, questionId])
 }
 \end{lstlisting}
 
@@ -1483,7 +1485,7 @@ export async function listForms(): Promise<FormSummary[]> {
 export async function getForm(id: string): Promise<Form | null> {
   const row = await prisma.form.findUnique({
     where: { id },
-    include: { questions: { orderBy: { position: 'asc' } } },
+    include: { questions: { orderBy: { order: 'asc' } } },
   });
   if (!row) {
     return null;
@@ -1499,10 +1501,10 @@ export async function createForm(input: CreateFormInput): Promise<Form> {
       title: input.title,
       description: input.description ?? null,
       questions: {
-        create: input.questions.map((q, position) => ({ ...q, position })),
+        create: input.questions.map((q, order) => ({ ...q, order })),
       },
     },
-    include: { questions: { orderBy: { position: 'asc' } } },
+    include: { questions: { orderBy: { order: 'asc' } } },
   });
   return formSchema.parse({ ...row, createdAt: row.createdAt.toISOString() });
 }
@@ -1516,94 +1518,109 @@ export async function deleteForm(id: string): Promise<boolean> {
 
 \textbf{File:} \path{lib/server/repo/postgres/submissions.ts}. Submission data access in Postgres.\par
 \begin{lstlisting}
+// Imports: the shared Prisma client and the shapes this repo returns.
 import { prisma } from '../../db';
 import type { Form } from '@/lib/schemas/form';
 import type { Submission } from '@/lib/schemas/submission';
 
+
+// Types: answers keyed by question id, and one stored Answer row.
 type Answers = Record<string, string | string[]>;
+type AnswerRow = { questionId: string; value: unknown };
+
 
 /** Returns what was stored so the same row can be mirrored to Firestore. */
 export async function createSubmission(
   form: Form,
   answers: Answers,
 ): Promise<Submission> {
+  // Rows to insert, one per answered question.
   const rows: {
     questionId: string;
-    text: string | null;
-    number: number | null;
+    value: string | string[];
   }[] = [];
+
+  // Walk the form's questions so answers to unknown ids are ignored.
   for (const question of form.questions) {
     const value = answers[question.id];
     if (value === undefined || value === '' || value.length === 0) {
       continue; // empty answers are not stored
     }
-    if (question.type === 'number') {
-      rows.push({ questionId: question.id, text: null, number: Number(value) });
-    } else {
-      const text = Array.isArray(value) ? JSON.stringify(value) : value;
-      rows.push({ questionId: question.id, text, number: null });
-    }
+
+    // The Answer.value column is JSON, so strings and string arrays fit as-is.
+    rows.push({ questionId: question.id, value });
   }
+
   // One nested create is a single transaction.
   const saved = await prisma.submission.create({
     data: { formId: form.id, answers: { create: rows } },
   });
+
+  // Shape the result like a read, so callers treat both the same way.
   return {
     id: saved.id,
     createdAt: saved.createdAt.toISOString(),
-    answers: toAnswerMap(form, rows),
+    answers: toAnswerMap(rows),
   };
 }
 
+
 /** Rebuilds the question-id keyed answer map from stored rows. */
-function toAnswerMap(
-  form: Form,
-  rows: { questionId: string; text: string | null; number: number | null }[],
-): Answers {
+function toAnswerMap(rows: AnswerRow[]): Answers {
   const map: Answers = {};
+
   for (const row of rows) {
-    const question = form.questions.find((q) => q.id === row.questionId);
-    if (row.number !== null) {
-      map[row.questionId] = String(row.number);
-    } else if (question?.type === 'multi_choice' && row.text) {
-      map[row.questionId] = JSON.parse(row.text) as string[];
-    } else if (row.text !== null) {
-      map[row.questionId] = row.text;
+    if (typeof row.value === 'string') {
+      // Single-value answers (text, number, choice, file id).
+      map[row.questionId] = row.value;
+    } else if (Array.isArray(row.value)) {
+      // Multi-choice answers come back as a list of strings.
+      map[row.questionId] = row.value.map(String);
     }
   }
+
   return map;
 }
 
+
 /** Lists one page of a form's submissions, newest first. */
 export async function listSubmissions(form: Form, page: number, limit: number) {
+  // Count and page query run in parallel; the count drives the pager.
   const [total, rows] = await Promise.all([
     prisma.submission.count({ where: { formId: form.id } }),
     prisma.submission.findMany({
       where: { formId: form.id },
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * limit,
+      skip: (page - 1) * limit, // pages are 1-based
       take: limit,
       include: { answers: true },
     }),
   ]);
+
+  // Convert DB rows into the API shape.
   const items: Submission[] = rows.map((row) => ({
     id: row.id,
     createdAt: row.createdAt.toISOString(),
-    answers: toAnswerMap(form, row.answers),
+    answers: toAnswerMap(row.answers),
   }));
+
   return { items, page, limit, total };
 }
 
+
 /** Every submission of a form (used by sync). */
 export async function listAllSubmissions(form: Form): Promise<Submission[]> {
+  // No paging: sync needs the whole set.
   const rows = await prisma.submission.findMany({
     where: { formId: form.id },
+    orderBy: { createdAt: 'desc' },
     include: { answers: true },
   });
+
   return rows.map((row) => ({
     id: row.id,
     createdAt: row.createdAt.toISOString(),
-    answers: toAnswerMap(form, row.answers),
+    answers: toAnswerMap(row.answers),
   }));
 }
 \end{lstlisting}
