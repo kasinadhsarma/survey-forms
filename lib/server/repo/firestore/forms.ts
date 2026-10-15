@@ -1,9 +1,34 @@
+import { randomUUID } from 'crypto';
 import { getDb } from '../../firestore';
-import { formSchema, type Form, type FormSummary } from '@/lib/schemas/form';
+import {
+  formSchema,
+  type CreateFormInput,
+  type Form,
+  type FormSummary,
+} from '@/lib/schemas/form';
 
+
+const newId = () => randomUUID().replace(/-/g, '');
+
+/** Creates a form with generated ids and a zero response counter. */
+export async function createForm(input: CreateFormInput): Promise<Form> {
+  const form: Form = {
+    id: newId(),
+    title: input.title,
+    description: input.description ?? null,
+    createdAt: new Date().toISOString(),
+    questions: input.questions.map((q, position) => ({
+      ...q,
+      id: newId(),
+      position,
+    })),
+  };
+  await mirrorForm(form, 0);
+  return form;
+}
 
 /**
- * Copies a form to Firestore under the same id.
+ * Writes a form to Firestore under the same id.
  * Keeps the response counter.
  */
 export async function mirrorForm(
@@ -32,7 +57,7 @@ export async function mirrorForm(
 
 
 /** Lists mirrored forms, newest first. */
-export async function listMirroredForms(): Promise<FormSummary[]> {
+export async function listForms(): Promise<FormSummary[]> {
   const snap = await getDb()
     .collection('forms')
     .orderBy('createdAt', 'desc')
@@ -52,14 +77,14 @@ export async function listMirroredForms(): Promise<FormSummary[]> {
 
 
 /** Lists the ids of all mirrored forms. */
-export async function listMirroredFormIds(): Promise<string[]> {
+export async function listFormIds(): Promise<string[]> {
   const snap = await getDb().collection('forms').select().get();
   return snap.docs.map((doc) => doc.id);
 }
 
 
 /** Returns one mirrored form, or null if it is missing. */
-export async function getMirroredForm(
+export async function getForm(
     id: string
 ): Promise<Form | null> {
   const snap = await getDb().collection('forms').doc(id).get();
@@ -71,7 +96,12 @@ export async function getMirroredForm(
 }
 
 
-/** Removes a form's mirror. */
-export async function deleteMirroredForm(id: string) {
-  await getDb().collection('forms').doc(id).delete();
+/** Deletes a form and its submissions. Returns false if it is missing. */
+export async function deleteForm(id: string): Promise<boolean> {
+  const ref = getDb().collection('forms').doc(id);
+  if (!(await ref.get()).exists) {
+    return false;
+  }
+  await getDb().recursiveDelete(ref);
+  return true;
 }

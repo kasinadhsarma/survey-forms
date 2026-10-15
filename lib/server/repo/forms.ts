@@ -1,36 +1,30 @@
-import type { CreateFormInput } from "@/lib/schemas/form";
-import { mirrorSafely,readWithFallback } from "./dual";
-import * as firestore from './firestore/forms'
-import * as postgres from './postgres/forms'
+import type { CreateFormInput } from '@/lib/schemas/form';
+import { mirrorSafely, readWithFallback } from './dual';
+import * as firestore from './firestore/forms';
+import * as postgres from './postgres/forms';
 
-
-export function listForm(){
-    return readWithFallback(
-        postgres.listForms,
-        firestore.listMirroredForms
-    );
-}
-export function getForm(id:string){
-    return readWithFallback(
-        () => postgres.getForm(id),
-        () => firestore.getMirroredForm(id),
-    );
+export function listForm() {
+  return readWithFallback(firestore.listForms, postgres.listForms);
 }
 
-/**
- * postgres first then the mirror
- */
-
-export async function createForm(input : CreateFormInput) {
-    const form = await postgres.createForm(input);
-    await mirrorSafely(() => firestore.mirrorForm(form));
-    return form; 
+export function getForm(id: string) {
+  return readWithFallback(
+    () => firestore.getForm(id),
+    () => postgres.getForm(id),
+  );
 }
-export async function  deleteForm(id:string){
-    const deleted = await postgres.deleteForm(id);
-    if (deleted){
-        await mirrorSafely(()=> firestore.deleteMirroredForm(id));
 
-    }
-    return deleted;
+/** Firestore first, then the local Postgres copy (dev only). */
+export async function createForm(input: CreateFormInput) {
+  const form = await firestore.createForm(input);
+  await mirrorSafely(() => postgres.mirrorForm(form));
+  return form;
+}
+
+export async function deleteForm(id: string) {
+  const deleted = await firestore.deleteForm(id);
+  if (deleted) {
+    await mirrorSafely(() => postgres.deleteForm(id));
+  }
+  return deleted;
 }

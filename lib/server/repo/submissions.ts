@@ -1,25 +1,21 @@
-import type{Form} from '@/lib/schemas/form';
-import { mirrorSafely,readWithFallback } from './dual';
-import * as firestore from  './firestore/submissions';
-import * as postgres from './postgres/submissions'
+import type { Form } from '@/lib/schemas/form';
+import { mirrorSafely, readWithFallback } from './dual';
+import * as firestore from './firestore/submissions';
+import * as postgres from './postgres/submissions';
 
-
-/**
- * postgres first then the mirror
- */
-
+/** Firestore first, then the local Postgres copy (dev only). */
 export async function createSubmission(
-    form : Form,
-    answers : Record<string,string | string[]>,
-){
-    const submission = await postgres.createSubmission(form,answers);
-    await mirrorSafely(()=> firestore.mirrorSubmission(form.id,submission));
-    return submission
+  form: Form,
+  answers: Record<string, string | string[]>,
+) {
+  const submission = await firestore.createSubmission(form, answers);
+  await mirrorSafely(() => postgres.mirrorSubmission(form.id, submission));
+  return submission;
 }
 
-export function listSubmissions(form:Form,page:number,limit:number){
-    return readWithFallback(
-        () => postgres.listSubmissions(form, page, limit),
-        () => firestore.listMirroredSubmissions(form.id, page, limit),
-    );
+export function listSubmissions(form: Form, page: number, limit: number) {
+  return readWithFallback(
+    () => firestore.listSubmissions(form.id, page, limit),
+    () => postgres.listSubmissions(form, page, limit),
+  );
 }

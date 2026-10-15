@@ -1,14 +1,13 @@
-import { prisma } from '../../db';
+import { getPrisma } from '../../db';
 import {
   formSchema,
-  type CreateFormInput,
   type Form,
   type FormSummary,
 } from '@/lib/schemas/form';
 
 /** Lists every form with its question and response counts. */
 export async function listForms(): Promise<FormSummary[]> {
-  const rows = await prisma.form.findMany({
+  const rows = await getPrisma().form.findMany({
     orderBy: { createdAt: 'desc' },
     include: { _count: { select: { questions: true, submissions: true } } },
   });
@@ -23,55 +22,57 @@ export async function listForms(): Promise<FormSummary[]> {
 
 /** Returns one form with its questions in order, or null if it is missing. */
 export async function getForm(id: string): Promise<Form | null> {
-  const row = await prisma.form.findUnique({
+  const row = await getPrisma().form.findUnique({
     where: { id },
-    include: { questions: 
-      { 
-        orderBy: { 
-          order: 'asc' 
-        } 
-      } 
-  },
+    include: { questions: { orderBy: { order: 'asc' } } },
   });
   if (!row) {
     return null;
   }
-  // Parsing catches a bad row on the server instead of in the browser.
-  return formSchema.parse({ 
-    ...row, 
-    createdAt: row.createdAt.toISOString() 
+  // The column is `order`; the API calls it `position`.
+  return formSchema.parse({
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    questions: row.questions.map(({ order, ...q }) => ({
+      ...q,
+      position: order,
+    })),
   });
 }
 
-/** Creates a form and its questions in one nested write. */
-export async function createForm(input: CreateFormInput): Promise<Form> {
-  const row = await prisma.form.create({
-    data: {
-      title: input.title,
-      description: input.description ?? null,
-      questions: {
-        create: input.questions.map((q, order) => ({ 
-          ...q, 
-          order 
-        })),
+/** Copies a Firestore form into local Postgres under the same ids. */
+export async function mirrorForm(form: Form): Promise<void> {
+  const prisma = getPrisma();
+  await prisma.$transaction([
+    prisma.form.upsert({
+      where: { id: form.id },
+      create: {
+        id: form.id,
+        title: form.title,
+        description: form.description,
+        createdAt: new Date(form.createdAt),
       },
-    },
-    include: { 
-      questions: { 
-        orderBy: { 
-          order: 'asc' 
-        } 
-      } 
-    },
-  });
-  return formSchema.parse({ 
-    ...row, 
-    createdAt: row.createdAt.toISOString() 
-  });
+      update: { title: form.title, description: form.description },
+    }),
+    ...form.questions.map((q) => {
+      const data = {
+        label: q.label,
+        type: q.type,
+        required: q.required,
+        options: q.options,
+        order: q.position,
+      };
+      return prisma.question.upsert({
+        where: { id: q.id },
+        create: { id: q.id, formId: form.id, ...data },
+        update: data,
+      });
+    }),
+  ]);
 }
 
 /** Deletes a form; its questions and submissions go with it. Returns false if missing. */
 export async function deleteForm(id: string): Promise<boolean> {
-  const result = await prisma.form.deleteMany({ where: { id } });
+  const result = await getPrisma().form.deleteMany({ where: { id } });
   return result.count > 0;
 }

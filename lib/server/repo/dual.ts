@@ -1,28 +1,39 @@
-export async function mirrorSafely(
-    task: () => Promise<unknown>
+import { isLocalPostgresEnabled } from '../env';
 
-): Promise<void> {
-    try{
-        await task();
-    } catch(error){
-        console.error ('Firestore mirror failed',error);
-    }
-}
 /**
- * Reads from postgres if the postgres trows
- * the same read runs against run firestor & not found(null) is a real 
- * answer and is not retaired
+ * Runs a write against the local Postgres copy. It is skipped outside local
+ * development, and a failure is logged, never thrown: Firestore already has
+ * the data.
  */
-export async function readWithFallback<T> (
-    primary : () => Promise <T>,
-    fallback: () => Promise <T>,
+export async function mirrorSafely(
+  task: () => Promise<unknown>,
+): Promise<void> {
+  if (!isLocalPostgresEnabled()) {
+    return;
+  }
+  try {
+    await task();
+  } catch (error) {
+    console.error('Local Postgres mirror failed', error);
+  }
+}
 
-) : Promise<T>{
-    try{
-        return await primary();
+/**
+ * Reads from Firestore. If that throws and local Postgres is enabled, the
+ * same read runs against Postgres. Not found (null) is a real answer and is
+ * not retried.
+ */
+export async function readWithFallback<T>(
+  primary: () => Promise<T>,
+  fallback: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await primary();
+  } catch (error) {
+    if (!isLocalPostgresEnabled()) {
+      throw error;
     }
-    catch(error){
-        console.error('postgres read failed using firestore ', error);
-        return fallback();
-    }
+    console.error('Firestore read failed, using local Postgres', error);
+    return fallback();
+  }
 }

@@ -11,9 +11,13 @@ const firebaseSchema = z.object({
 });
 
 /**
- * 2 syncing DBs: one local, another is Firebase.
- * This Firebase environmental variable function.
+ * Firestore is the primary store. Postgres (Prisma) is a local-only copy:
+ * on only outside production and only when DATABASE_URL is set.
  */
+export function isLocalPostgresEnabled(): boolean {
+  return process.env.NODE_ENV !== 'production' && !!process.env.DATABASE_URL;
+}
+
 export function getDatabaseEnv() {
   return databaseSchema.parse(process.env);
 }

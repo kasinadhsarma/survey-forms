@@ -1,5 +1,5 @@
 // Imports: the shared Prisma client and the shapes this repo returns.
-import { prisma } from '../../db';
+import { getPrisma } from '../../db';
 import type { Form } from '@/lib/schemas/form';
 import type { Submission } from '@/lib/schemas/submission';
 
@@ -9,39 +9,30 @@ type Answers = Record<string, string | string[]>;
 type AnswerRow = { questionId: string; value: unknown };
 
 
-/** Returns what was stored so the same row can be mirrored to Firestore. */
-export async function createSubmission(
-  form: Form,
-  answers: Answers,
-): Promise<Submission> {
-  // Rows to insert, one per answered question.
-  const rows: {
-    questionId: string;
-    value: string | string[];
-  }[] = [];
-
-  // Walk the form's questions so answers to unknown ids are ignored.
-  for (const question of form.questions) {
-    const value = answers[question.id];
-    if (value === undefined || value === '' || value.length === 0) {
-      continue; // empty answers are not stored
-    }
-
-    // The Answer.value column is JSON, so strings and string arrays fit as-is.
-    rows.push({ questionId: question.id, value });
-  }
-
-  // One nested create is a single transaction.
-  const saved = await prisma.submission.create({
-    data: { formId: form.id, answers: { create: rows } },
+/** Copies a Firestore submission into local Postgres. Safe to repeat. */
+export async function mirrorSubmission(
+  formId: string,
+  submission: Submission,
+): Promise<void> {
+  const exists = await getPrisma().submission.findUnique({
+    where: { id: submission.id },
+    select: { id: true },
   });
-
-  // Shape the result like a read, so callers treat both the same way.
-  return {
-    id: saved.id,
-    createdAt: saved.createdAt.toISOString(),
-    answers: toAnswerMap(rows),
-  };
+  if (exists) {
+    return;
+  }
+  await getPrisma().submission.create({
+    data: {
+      id: submission.id,
+      formId,
+      createdAt: new Date(submission.createdAt),
+      answers: {
+        create: Object.entries(submission.answers).map(
+          ([questionId, value]) => ({ questionId, value }),
+        ),
+      },
+    },
+  });
 }
 
 
@@ -67,8 +58,8 @@ function toAnswerMap(rows: AnswerRow[]): Answers {
 export async function listSubmissions(form: Form, page: number, limit: number) {
   // Count and page query run in parallel; the count drives the pager.
   const [total, rows] = await Promise.all([
-    prisma.submission.count({ where: { formId: form.id } }),
-    prisma.submission.findMany({
+    getPrisma().submission.count({ where: { formId: form.id } }),
+    getPrisma().submission.findMany({
       where: { formId: form.id },
       orderBy: { createdAt: 'desc' },
       skip: (page - 1) * limit, // pages are 1-based
@@ -85,21 +76,4 @@ export async function listSubmissions(form: Form, page: number, limit: number) {
   }));
 
   return { items, page, limit, total };
-}
-
-
-/** Every submission of a form (used by sync). */
-export async function listAllSubmissions(form: Form): Promise<Submission[]> {
-  // No paging: sync needs the whole set.
-  const rows = await prisma.submission.findMany({
-    where: { formId: form.id },
-    orderBy: { createdAt: 'desc' },
-    include: { answers: true },
-  });
-
-  return rows.map((row) => ({
-    id: row.id,
-    createdAt: row.createdAt.toISOString(),
-    answers: toAnswerMap(row.answers),
-  }));
 }

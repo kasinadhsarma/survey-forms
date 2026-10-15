@@ -8,9 +8,10 @@ responses and view them in a table.
 - Next.js 16 (App Router, Cache Components), Tailwind CSS v4
 - react-hook-form + Zod, with `@better-fetch/fetch` as the typed client
 - Hono API inside a Next.js route handler, validated with Zod
-- Prisma 7 + PostgreSQL for forms, questions and answers
-- Cloud Firestore as a live mirror of the data (reads fall back to it if
-  Postgres is down) and as the store for uploaded files
+- Cloud Firestore is the primary database (forms, submissions, uploaded files)
+- Prisma 7 + PostgreSQL is a local-only copy for development: it is written
+  to and used as a read fallback only when `NODE_ENV` is not `production` and
+  `DATABASE_URL` is set. Production needs only the Firebase variables.
 
 The Zod schemas in `lib/schemas/` are imported by both the browser and the
 API, so the same rules run in the form, in the API and before saving.
@@ -41,8 +42,8 @@ Create a Cloud Firestore database in the Firebase console first.
 | GET, POST   | `/api/forms/:id/submissions` | list a page, submit                    |
 | POST        | `/api/files`                 | upload a file (max 700 KB)             |
 | GET         | `/api/files/:id`             | download a file                        |
-| GET         | `/api/sync/status`           | compare Postgres and Firestore (token) |
-| POST        | `/api/sync`                  | copy Postgres to Firestore (token)     |
+| GET         | `/api/sync/status`           | compare Firestore and local Postgres (token) |
+| POST        | `/api/sync`                  | copy Firestore to local Postgres (token) |
 
 Every other method returns a JSON 405, and errors have the shape
 `{ error: { code, message } }`.

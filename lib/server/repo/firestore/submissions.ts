@@ -1,12 +1,27 @@
 
+import { randomUUID } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { getDb } from "../../firestore";
+import type { Form } from "@/lib/schemas/form";
 import type { Submission } from "@/lib/schemas/submission";
 
 /**
  * Writes the submission and bumps the form counter in one transaction,
  * only if the document did not already exist, so mirroring twice counts once.
  */
+export async function createSubmission(
+    form: Form,
+    answers: Record<string, string | string[]>,
+): Promise<Submission> {
+    const submission: Submission = {
+        id: randomUUID().replace(/-/g, ""),
+        createdAt: new Date().toISOString(),
+        answers,
+    };
+    await mirrorSubmission(form.id, submission);
+    return submission;
+}
+
 export async function mirrorSubmission(
     formId: string,
     submission: Submission
@@ -33,7 +48,7 @@ export async function mirrorSubmission(
         }
     });
 }
-export async function listMirroredSubmissions(
+export async function listSubmissions(
     formId: string,
     page: number,
     limit : number,
@@ -54,10 +69,19 @@ export async function listMirroredSubmissions(
     };
 
 }
-export async function countMirroredSubmissions(
+export async function countSubmissions(
     formId: string,
 
 ) : Promise<number>{
     const col = getDb().collection('forms').doc(formId).collection ('submissions');
     return(await col.count().get()).data().count;
+}
+
+/** Every submission of a form (used by sync). */
+export async function listAllSubmissions(formId: string): Promise<Submission[]> {
+    const snap = await getDb()
+        .collection('forms').doc(formId).collection('submissions')
+        .orderBy('createdAt', 'desc')
+        .get();
+    return snap.docs.map((doc) => doc.data() as Submission);
 }
