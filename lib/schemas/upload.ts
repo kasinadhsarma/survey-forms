@@ -1,6 +1,6 @@
 import {z} from "zod";
-
-export const Allowed_FILE_TYPES = [
+export const MAX_FILE_BYTES = 700 *1024;
+export const ALLOWED_FILE_TYPES = [
     'application/pdf',
     'image/png',
     'image/jpeg',
