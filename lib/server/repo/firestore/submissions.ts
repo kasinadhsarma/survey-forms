@@ -2,6 +2,7 @@
 import { randomUUID } from "crypto";
 import { FieldValue } from "firebase-admin/firestore";
 import { getDb } from "../../firestore";
+import { toIso } from "./forms";
 import type { Form } from "@/lib/schemas/form";
 import type { Submission } from "@/lib/schemas/submission";
 
@@ -62,7 +63,7 @@ export async function listSubmissions(
             .limit(limit)
             .get(),
     ]);
-    const items = snap.docs.map((doc) => doc.data() as Submission);
+    const items = snap.docs.map((doc) => ({ ...doc.data(), createdAt: toIso(doc.get('createdAt')) }) as Submission);
     return {items, 
         page, 
         limit,total: totalsnap.data().count
@@ -83,5 +84,5 @@ export async function listAllSubmissions(formId: string): Promise<Submission[]> 
         .collection('forms').doc(formId).collection('submissions')
         .orderBy('createdAt', 'desc')
         .get();
-    return snap.docs.map((doc) => doc.data() as Submission);
+    return snap.docs.map((doc) => ({ ...doc.data(), createdAt: toIso(doc.get('createdAt')) }) as Submission);
 }

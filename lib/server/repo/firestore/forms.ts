@@ -8,6 +8,15 @@ import {
 } from '@/lib/schemas/form';
 
 
+/** Firestore Timestamps (e.g. docs made in the console) become ISO strings. */
+export function toIso(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (value && typeof (value as { toDate?: unknown }).toDate === 'function') {
+    return (value as { toDate(): Date }).toDate().toISOString();
+  }
+  return new Date(0).toISOString();
+}
+
 const newId = () => randomUUID().replace(/-/g, '');
 
 /** Creates a form with generated ids and a zero response counter. */
@@ -68,7 +77,7 @@ export async function listForms(): Promise<FormSummary[]> {
     return {
       id: doc.id,
       title: data.title as string,
-      createdAt: data.createdAt as string,
+      createdAt: toIso(data.createdAt),
       questionCount: (data.questions as unknown[] | undefined)?.length ?? 0,
       responseCount: (data.responseCount as number | undefined) ?? 0,
     };
@@ -92,7 +101,12 @@ export async function getForm(
     return null;
   }
   // Parsing drops the extra responseCount field and catches bad documents.
-  return formSchema.parse({ ...snap.data(), id: snap.id });
+  return formSchema.parse({
+    ...snap.data(),
+    id: snap.id,
+    description: snap.get('description') ?? null,
+    createdAt: toIso(snap.get('createdAt')),
+  });
 }
 
 
