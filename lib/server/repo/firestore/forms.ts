@@ -51,6 +51,13 @@ export async function listMirroredForms(): Promise<FormSummary[]> {
 }
 
 
+/** Lists the ids of all mirrored forms. */
+export async function listMirroredFormIds(): Promise<string[]> {
+  const snap = await getDb().collection('forms').select().get();
+  return snap.docs.map((doc) => doc.id);
+}
+
+
 /** Returns one mirrored form, or null if it is missing. */
 export async function getMirroredForm(
     id: string

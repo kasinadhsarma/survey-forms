@@ -54,7 +54,7 @@ export async function listMirroredSubmissions(
     };
 
 }
-export async function countMirrorSubmission(
+export async function countMirroredSubmissions(
     formId: string,
 
 ) : Promise<number>{
